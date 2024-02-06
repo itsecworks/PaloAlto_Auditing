@@ -8,13 +8,12 @@
 #
 import xml.etree.ElementTree as ET
 import time
-import pdb
 
-file_path = 'C:/Users/dakos/Downloads/'
-xml_input = file_path + '7106.xml'
+file_path = 'C:/Users/akdaniel/Downloads/'
+xml_input = file_path + 'running-config.xml'
 xml_output = xml_input.replace('.xml','_mod.xml')
 time_str = time.strftime("%Y%m%d_%H%M%S")
-result_output = file_path + 'notused_objects_' + time_str + '.txt'
+result_output_csv = file_path + 'paloalto_address_audit_notusedobjs_' + time_str + '.csv'
 
 
 def get_all_children(dg_name, dg_parents, dg_child_list):
@@ -46,7 +45,7 @@ def get_all_parents(ro_element):
     return (dg_parents)
 
 print("start time:", time.strftime("%Y%m%d_%H%M%S"))
-result = ''
+result_csv = 'object_type, device-group, object_name\n'
 
 tree = ET.parse(xml_input)
 root = tree.getroot()
@@ -62,7 +61,7 @@ for key in pa_all_dgs:
             dg_name = dg.attrib["name"]
         else:
             dg_name = key
-        print(dg_name)
+
         my_ch_list = []
         dg_all_child_names = get_all_children(dg_name, dg_parents, my_ch_list)
 
@@ -71,7 +70,7 @@ for key in pa_all_dgs:
         pre_rulebase = dg.find("./pre-rulebase")
         address_groups = dg.find("./address-group")
 
-        print("Lets remove the unused address-groups first, so we can remove addresses that were only in unused address-groups.")
+        #Lets remove the unused address-groups first, so we can remove addresses that were only in unused address-groups.
         if address_groups is not None:
             for addr_grp in address_groups:
                 addr_grp_name = addr_grp.attrib["name"]
@@ -94,21 +93,21 @@ for key in pa_all_dgs:
                                     obj_used = True
                                     break
                             if not obj_used:
-                                result += "{c1}, {c2}, {c3}\n".format(c1="address-group", c2=dg_name, c3=addr_grp_name)
+                                result_csv += "{c1}, {c2}, {c3}\n".format(c1="address-group", c2=dg_name, c3=addr_grp_name)
                                 if dg_name == "shared":
                                     xpath_remove = "./" + dg_name + "/address-group"
                                 else:
                                     xpath_remove = "./devices/entry/device-group/entry[@name='" + dg_name + "']/address-group"
                                 root.find(xpath_remove).remove(addr_grp)
                         else:
-                            result += "{c1}, {c2}, {c3}\n".format(c1="address-group", c2=dg_name, c3=addr_grp_name)
+                            result_csv += "{c1}, {c2}, {c3}\n".format(c1="address-group", c2=dg_name, c3=addr_grp_name)
                             if dg_name == "shared":
                                 xpath_remove = "./" + dg_name + "/address-group"
                             else:
                                 xpath_remove = "./devices/entry/device-group/entry[@name='" + dg_name + "']/address-group"
                             root.find(xpath_remove).remove(addr_grp)
 
-        print("address check...")
+        # lets remove the unused addresses
         if addresses is not None:
             for addr in addresses:
                 addr_name = addr.attrib["name"]
@@ -132,14 +131,14 @@ for key in pa_all_dgs:
                                         obj_used = True
                                         break
                                 if not obj_used:
-                                    result += "{c1}, {c2}, {c3}\n".format(c1="address", c2=dg_name, c3=addr_name)
+                                    result_csv += "{c1}, {c2}, {c3}\n".format(c1="address", c2=dg_name, c3=addr_name)
                                     if dg_name == "shared":
                                         xpath_remove = "./" + dg_name + "/address"
                                     else:
                                         xpath_remove = "./devices/entry/device-group/entry[@name='" + dg_name + "']/address"
                                     root.find(xpath_remove).remove(addr)
                             else:
-                                result += "{c1}, {c2}, {c3}\n".format(c1="address", c2=dg_name, c3=addr_name)
+                                result_csv += "{c1}, {c2}, {c3}\n".format(c1="address", c2=dg_name, c3=addr_name)
                                 if dg_name == "shared":
                                     xpath_remove = "./" + dg_name + "/address"
                                 else:
@@ -148,8 +147,8 @@ for key in pa_all_dgs:
 
 
 
-with open(result_output, 'w') as fp:
-    fp.write(result)
+with open(result_output_csv, 'w') as fp:
+    fp.write(result_csv)
 
 xml_str = ET.tostring(root)
 with open(xml_output, 'wb') as f:

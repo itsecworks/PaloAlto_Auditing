@@ -8,12 +8,14 @@
 #
 import xml.etree.ElementTree as ET
 import time
+import json
 
-file_path = 'C:/Users/dakos/Downloads/'
-xml_input = file_path + '7106.xml'
+file_path = 'C:/Users/akdaniel/Downloads/'
+xml_input = file_path + 'running-config.xml'
 xml_output = xml_input.replace('.xml','_mod.xml')
 time_str = time.strftime("%Y%m%d_%H%M%S")
-result_output = file_path + 'address_objects_with_large_netmask_' + time_str + '.csv'
+result_output_csv = file_path + 'paloalto_address_audit_large_netmasks_' + time_str + '.csv'
+result_output_json = file_path + 'paloalto_address_audit_large_netmasks_' + time_str + '.json'
 netmask_limit = 16
 
 
@@ -82,7 +84,7 @@ root = tree.getroot()
 ro_element = root.find("./readonly")
 dg_parents = get_all_parents(ro_element)
 pa_all_dgs = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
-result = {}
+result_dict = {}
 
 for key in pa_all_dgs:
     xpath = pa_all_dgs[key]
@@ -106,61 +108,67 @@ for key in pa_all_dgs:
                         netmask = ip.split("/")[1]
                         if int(netmask) < netmask_limit:
                             print("unaccepted nw object:", dg_name, addr_name, " with netmask: ", netmask)
-                            if dg_name not in result:
-                                result[dg_name] = {}
-                            if addr_name not in result[dg_name]:
-                                result[dg_name][addr_name] = {}
-                                result[dg_name][addr_name]["netmask"] = netmask
-                                result[dg_name][addr_name]['used_objects'] = [addr_name]
+                            if dg_name not in result_dict:
+                                result_dict[dg_name] = {}
+                            if addr_name not in result_dict[dg_name]:
+                                result_dict[dg_name][addr_name] = {}
+                                result_dict[dg_name][addr_name]["netmask"] = netmask
+                                result_dict[dg_name][addr_name]['used_objects'] = [addr_name]
 
                             if address_groups is not None and len(address_groups) > 0 and addr_name in str(ET.tostring(address_groups)):
                                 used_objects = get_address_groups(address_groups, addr_name)
-                                result[dg_name][addr_name]['used_objects'] += used_objects
+                                result_dict[dg_name][addr_name]['used_objects'] += used_objects
 
-                            for object in result[dg_name][addr_name]['used_objects']:
+                            for entry in result_dict[dg_name][addr_name]['used_objects']:
                                 for rule_pos in ["pre-rulebase", "post-rulebase"]:
                                     data = dg.find("./" + rule_pos)
-                                    if data is not None and len(data) > 0 and object in str(ET.tostring(data)):
-                                        if rule_pos not in result[dg_name][addr_name]:
-                                            result[dg_name][addr_name][rule_pos] = get_rules(object, data)
-                                        else:
-                                            result[dg_name][addr_name][rule_pos] += get_rules(object, data)
+                                    if data is not None and len(data) > 0 and entry in str(ET.tostring(data)):
+                                        if entry not in result_dict[dg_name][addr_name]:
+                                            result_dict[dg_name][addr_name][entry] = {}
+                                        if rule_pos not in result_dict[dg_name][addr_name][entry]:
+                                            result_dict[dg_name][addr_name][entry][rule_pos] = []
+                                        result_dict[dg_name][addr_name][entry][rule_pos] += get_rules(entry, data)
 
                             if len(dg_all_child_names) > 0:
                                 for child_dg_name in dg_all_child_names:
-                                    used_objects_new = []
                                     child_dg = root.find("./devices/entry/device-group/entry[@name='" + child_dg_name + "']")
                                     ch_address_groups = child_dg.find("./address-group")
-                                    if ch_address_groups is not None and len(ch_address_groups) > 0 and addr_name in str(ET.tostring(ch_address_groups)):
-                                        if len(used_objects) > 0:
-                                            for entry in used_objects:
-                                                used_objects_new += get_address_groups(ch_address_groups, entry)
-                                        else:
-                                            used_objects_new = get_address_groups(ch_address_groups, addr_name)
+                                    used_objects_new = []
+                                    for entry in result_dict[dg_name][addr_name]['used_objects']:
+                                        if ch_address_groups is not None and len(ch_address_groups) > 0 and entry in str(ET.tostring(ch_address_groups)):
+                                            used_objects_new += get_address_groups(ch_address_groups, entry)
+                                    result_dict[dg_name][addr_name]['used_objects'] += used_objects_new
 
-                                        result[dg_name][addr_name]['used_objects'] += used_objects_new
-                                        used_objects += used_objects_new
-
-                                    for object in result[dg_name][addr_name]['used_objects']:
+                                    for entry in result_dict[dg_name][addr_name]['used_objects']:
                                         for rule_pos in ["pre-rulebase", "post-rulebase"]:
                                             data = child_dg.find("./" + rule_pos)
-                                            if data is not None and len(data) > 0 and object in str(ET.tostring(data)):
-                                                if rule_pos not in result[dg_name][addr_name]:
-                                                    result[dg_name][addr_name][rule_pos] = get_rules(object, data)
-                                                else:
-                                                    result[dg_name][addr_name][rule_pos] += get_rules(object, data)
+                                            if data is not None and len(data) > 0 and entry in str(ET.tostring(data)):
+                                                if entry not in result_dict[dg_name][addr_name]:
+                                                    result_dict[dg_name][addr_name][entry] = {}
+                                                if rule_pos not in result_dict[dg_name][addr_name][entry]:
+                                                    result_dict[dg_name][addr_name][entry][rule_pos] = []
+                                                result_dict[dg_name][addr_name][entry][rule_pos] += get_rules(entry, data)
+
+with open(result_output_json, "w") as outfile:
+    json.dump(result_dict, outfile)
 
 #write to csv output
-result_csv = ''
-for dg_name in result:
-    for addr_name in result[dg_name]:
-        for key in result[dg_name][addr_name]:
-            if isinstance(result[dg_name][addr_name][key],list):
-                for entry in result[dg_name][addr_name][key]:
-                    result_csv += "{c1}, {c2}, {c3}, {c4}\n".format(c1=dg_name, c2=addr_name, c3=key, c4=entry)
-            else:
-                result_csv += "{c1}, {c2}, {c3}, {c4}\n".format(c1=dg_name, c2=addr_name, c3=key,
-                                                                c4=result[dg_name][addr_name][key])
+result_csv = 'device-group, address_name, netmask, contained_address_name, rulename\n'
+for dg_name in result_dict:
+    for addr_name in result_dict[dg_name]:
+        for subaddr_name in result_dict[dg_name][addr_name]:
+            if 'pre-rulebase' in result_dict[dg_name][addr_name][subaddr_name] and len(result_dict[dg_name][addr_name][subaddr_name]['pre-rulebase']) > 0:
+                for entry in result_dict[dg_name][addr_name][subaddr_name]['pre-rulebase']:
+                    result_csv += "{c1}, {c2}, {c3}, {c4}, {c5}\n".format(c1=dg_name, c2=addr_name,
+                                                                          c3=result_dict[dg_name][addr_name]['netmask'],
+                                                                          c4=subaddr_name, c5=entry)
+            if 'post-rulebase' in result_dict[dg_name][addr_name][subaddr_name] and len(result_dict[dg_name][addr_name][subaddr_name]['post-rulebase']) > 0:
+                for entry in result_dict[dg_name][addr_name][subaddr_name]['post-rulebase']:
+                    result_csv += "{c1}, {c2}, {c3}, {c4}, {c5}\n".format(c1=dg_name, c2=addr_name,
+                                                                          c3=result_dict[dg_name][addr_name]['netmask'],
+                                                                          c4=subaddr_name, c5=entry)
 
-with open(result_output, 'w') as fp:
+
+
+with open(result_output_csv, 'w') as fp:
     fp.write(result_csv)
