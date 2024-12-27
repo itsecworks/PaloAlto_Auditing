@@ -4,21 +4,26 @@
 #
 # Description:
 # -------------
-# This script find the unused objects with in panorama device-group hierarchy.
+# This script find the unused address-groups and addresses within panorama device-group hierarchy.
+# It also checks fqdn address type if resolvable
+# the code is bugy: addr-group in addr-group check is missing!!!
 #
 import xml.etree.ElementTree as ET
 import time
+import socket
+import pdb
 
-file_path = 'C:/Users/akdaniel/Downloads/'
-xml_input = file_path + 'running-config.xml'
+file_path = 'C:/Users/dakos/Downloads/'
+xml_input = file_path + '12257.xml'
 xml_output = xml_input.replace('.xml','_mod.xml')
 time_str = time.strftime("%Y%m%d_%H%M%S")
-result_output_csv = file_path + 'paloalto_address_audit_notusedobjs_' + time_str + '.csv'
+result_output = file_path + 'paloalto_address_audit_' + time_str + '.csv'
 
 
 def get_all_children(dg_name, dg_parents, dg_child_list):
 
-
+    # this collects for a dg all direct and indirect child dgs.
+    # apart from shared since it has already.
     if dg_name in dg_parents:
         dg_child_list += dg_parents[dg_name]
         if dg_name != "shared":
@@ -29,7 +34,8 @@ def get_all_children(dg_name, dg_parents, dg_child_list):
 
 def get_all_parents(ro_element):
 
-    # a dictionary with key as a parent dg and value as all dg that parent dg is the one in the key.
+    # a dictionary with key as a parent dg and as value a list of all direct child dgs only to that parent dg.
+    # apart from shared since it contains all dgs, not just the direct child dg.
     dg_parents = {}
     dg_parents["shared"] = []
     for dg in ro_element.findall("./devices/entry/device-group/entry"):
@@ -45,7 +51,7 @@ def get_all_parents(ro_element):
     return (dg_parents)
 
 print("start time:", time.strftime("%Y%m%d_%H%M%S"))
-result_csv = 'object_type, device-group, object_name\n'
+result_csv = 'device-group, object_type, object_name, object_subtype, status\n'
 
 tree = ET.parse(xml_input)
 root = tree.getroot()
@@ -61,19 +67,19 @@ for key in pa_all_dgs:
             dg_name = dg.attrib["name"]
         else:
             dg_name = key
-
+        print(dg_name)
         my_ch_list = []
         dg_all_child_names = get_all_children(dg_name, dg_parents, my_ch_list)
-
         addresses = dg.find("./address")
         post_rulebase = dg.find("./post-rulebase")
         pre_rulebase = dg.find("./pre-rulebase")
         address_groups = dg.find("./address-group")
 
-        #Lets remove the unused address-groups first, so we can remove addresses that were only in unused address-groups.
+        print("Lets remove the unused address-groups first, so we can remove addresses that were only in unused address-groups.")
         if address_groups is not None:
             for addr_grp in address_groups:
                 addr_grp_name = addr_grp.attrib["name"]
+                # addr-group in addr-group check is missing!!!
                 if pre_rulebase is None or (len(pre_rulebase) > 0 and addr_grp_name not in str(ET.tostring(pre_rulebase))):
                     if post_rulebase is None or (len(post_rulebase) > 0 and addr_grp_name not in str(ET.tostring(post_rulebase))):
                         if len(dg_all_child_names) > 0:
@@ -93,24 +99,40 @@ for key in pa_all_dgs:
                                     obj_used = True
                                     break
                             if not obj_used:
-                                result_csv += "{c1}, {c2}, {c3}\n".format(c1="address-group", c2=dg_name, c3=addr_grp_name)
+                                result_csv += "{c1}, {c2}, {c3}, {c4}, {c5}\n".format(c1=dg_name, c2="address-group", c3=addr_grp_name, c4="na", c5="not_used")
                                 if dg_name == "shared":
                                     xpath_remove = "./" + dg_name + "/address-group"
                                 else:
                                     xpath_remove = "./devices/entry/device-group/entry[@name='" + dg_name + "']/address-group"
                                 root.find(xpath_remove).remove(addr_grp)
                         else:
-                            result_csv += "{c1}, {c2}, {c3}\n".format(c1="address-group", c2=dg_name, c3=addr_grp_name)
+                            result_csv += "{c1}, {c2}, {c3}, {c4}, {c5}\n".format(c1=dg_name, c2="address-group", c3=addr_grp_name, c4="na", c5="not_used")
                             if dg_name == "shared":
                                 xpath_remove = "./" + dg_name + "/address-group"
                             else:
                                 xpath_remove = "./devices/entry/device-group/entry[@name='" + dg_name + "']/address-group"
                             root.find(xpath_remove).remove(addr_grp)
 
-        # lets remove the unused addresses
+        print("address check...")
         if addresses is not None:
             for addr in addresses:
                 addr_name = addr.attrib["name"]
+                if addr.find("fqdn") is not None:
+                    addr_type = "fqdn"
+                    addr_val = addr.find("fqdn").text
+                    try:
+                        data = socket.gethostbyname(addr_val)
+                        result_csv += "{c1}, {c2}, {c3}, {c4} {c5}\n".format(c1=dg_name, c2="address", c3=addr_name, c4=addr_type, c5="resolvable")
+                    except Exception:
+                        # fail gracefully!
+                        result_csv += "{c1}, {c2}, {c3}, {c4} {c5}\n".format(c1=dg_name, c2="address", c3=addr_name, c4=addr_type, c5="not-resolvable")
+                elif addr.find("ip-netmask") is not None:
+                    addr_type = "ip-netmask"
+                elif addr.find("ip-range") is not None:
+                    addr_type = "ip-range"
+                else:
+                    addr_type = "unknown"
+
                 if pre_rulebase is None or (len(pre_rulebase) > 0 and addr_name not in str(ET.tostring(pre_rulebase))):
                     if post_rulebase is None or (len(post_rulebase) > 0 and addr_name not in str(ET.tostring(post_rulebase))):
                         if address_groups is None or (len(address_groups) > 0 and addr_name not in str(ET.tostring(address_groups))):
@@ -131,14 +153,16 @@ for key in pa_all_dgs:
                                         obj_used = True
                                         break
                                 if not obj_used:
-                                    result_csv += "{c1}, {c2}, {c3}\n".format(c1="address", c2=dg_name, c3=addr_name)
+                                    result_csv += "{c1}, {c2}, {c3}, {c4}, {c5}\n".format(c1=dg_name, c2="address", c3=addr_name, c4=addr_type, c5="not_used")
                                     if dg_name == "shared":
                                         xpath_remove = "./" + dg_name + "/address"
                                     else:
                                         xpath_remove = "./devices/entry/device-group/entry[@name='" + dg_name + "']/address"
                                     root.find(xpath_remove).remove(addr)
+
+
                             else:
-                                result_csv += "{c1}, {c2}, {c3}\n".format(c1="address", c2=dg_name, c3=addr_name)
+                                result_csv += "{c1}, {c2}, {c3}, {c4}, {c5}\n".format(c1=dg_name, c2="address", c3=addr_name, c4=addr_type, c5="not_used")
                                 if dg_name == "shared":
                                     xpath_remove = "./" + dg_name + "/address"
                                 else:
@@ -147,8 +171,9 @@ for key in pa_all_dgs:
 
 
 
-with open(result_output_csv, 'w') as fp:
-    fp.write(result_csv)
+
+with open(result_output, 'w') as fp:
+    fp.write(result)
 
 xml_str = ET.tostring(root)
 with open(xml_output, 'wb') as f:
