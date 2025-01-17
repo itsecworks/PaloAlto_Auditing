@@ -13,42 +13,59 @@ import time
 import socket
 import pdb
 
-file_path = 'C:/Users/dakos/Downloads/'
-xml_input = file_path + '12257.xml'
+file_path = 'C:/temp/csaba/'
+xml_input = file_path + 'config.xml'
 xml_output = xml_input.replace('.xml','_mod.xml')
 time_str = time.strftime("%Y%m%d_%H%M%S")
 result_output = file_path + 'paloalto_address_audit_' + time_str + '.csv'
 
+def check_addr_rulebase(rulebase, obj_name):
 
-def get_all_children(dg_name, dg_parents, dg_child_list):
-
-    # this collects for a dg all direct and indirect child dgs.
-    # apart from shared since it has already.
-    if dg_name in dg_parents:
-        dg_child_list += dg_parents[dg_name]
-        if dg_name != "shared":
-            for child_dg in dg_parents[dg_name]:
-                get_all_children(child_dg, dg_parents, dg_child_list)
-    return dg_child_list
+    for ruletype in rulebase:
+        for rule in ruletype.find('./rules/entry'):
+            if rule.find('./source') is not None:
+                if obj_name in str(ET.tostring(rule.find('./source'))):
+                    print('objact name found')
+            if rule.find('./destination') is not None:
+                if obj_name in str(ET.tostring(rule.find('destination'))):
+                    print('object name found')
 
 
-def get_all_parents(ro_element):
+# Function to find all descendants fora a device-group recursively
+def find_descendants(dg_children, parent_dg):
+    
+    dg_descendants = []  # List to store descendants of a device-group
+    # Find all children of the given parent
+    if parent_dg in dg_children:
+        children = dg_children[parent_dg]
+    
+        for child in children:
+            # add a single list element to the descendant list
+            dg_descendants.append(child)
+            # extend with multiple list elements the device-group with recursively get descendants
+            dg_descendants.extend(find_descendants(dg_children, child)) 
+    
+    return dg_descendants
 
-    # a dictionary with key as a parent dg and as value a list of all direct child dgs only to that parent dg.
-    # apart from shared since it contains all dgs, not just the direct child dg.
-    dg_parents = {}
-    dg_parents["shared"] = []
-    for dg in ro_element.findall("./devices/entry/device-group/entry"):
-        dg_name = dg.attrib["name"]
-        dg_parents["shared"].append(dg_name)
-        if dg.find("./parent-dg") is not None:
-            parent_dg_name = dg.find("./parent-dg").text
-            if parent_dg_name not in dg_parents:
-                dg_parents[parent_dg_name] = [dg_name]
-            else:
-                dg_parents[parent_dg_name].append(dg_name)
+# Function to find all children to each device-group
+def find_children(ro_element):
 
-    return (dg_parents)
+    # we create a dictionary with key as the device-group and with value as a list of direct child device-groups.
+    dg_children = {}
+    dg_children['shared'] = []
+    for dg in ro_element.findall('./devices/entry/device-group/entry'):
+        dg_name = dg.get('name')
+        if dg.find('./parent-dg') is not None and len(dg.find('./parent-dg').text) > 0:
+            parent_dg_name = dg.find('./parent-dg').text
+        else:
+            parent_dg_name = 'shared'
+            
+        if parent_dg_name not in dg_children:
+            dg_children[parent_dg_name] = [dg_name]
+        else:
+            dg_children[parent_dg_name].append(dg_name)
+
+    return (dg_children)
 
 print("start time:", time.strftime("%Y%m%d_%H%M%S"))
 result_csv = 'device-group, object_type, object_name, object_subtype, status\n'
@@ -56,7 +73,7 @@ result_csv = 'device-group, object_type, object_name, object_subtype, status\n'
 tree = ET.parse(xml_input)
 root = tree.getroot()
 ro_element = root.find("./readonly")
-dg_parents = get_all_parents(ro_element)
+dg_children = find_children(ro_element)
 print("load time:", time.strftime("%Y%m%d_%H%M%S"))
 
 pa_all_dgs = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
@@ -68,8 +85,8 @@ for key in pa_all_dgs:
         else:
             dg_name = key
         print(dg_name)
-        my_ch_list = []
-        dg_all_child_names = get_all_children(dg_name, dg_parents, my_ch_list)
+        pdb.set_trace()
+        dg_descendants = find_descendants(dg_children, dg_name)
         addresses = dg.find("./address")
         post_rulebase = dg.find("./post-rulebase")
         pre_rulebase = dg.find("./pre-rulebase")
@@ -82,9 +99,9 @@ for key in pa_all_dgs:
                 # addr-group in addr-group check is missing!!!
                 if pre_rulebase is None or (len(pre_rulebase) > 0 and addr_grp_name not in str(ET.tostring(pre_rulebase))):
                     if post_rulebase is None or (len(post_rulebase) > 0 and addr_grp_name not in str(ET.tostring(post_rulebase))):
-                        if len(dg_all_child_names) > 0:
+                        if len(dg_descendants) > 0:
                             obj_used = False
-                            for child_dg_name in dg_all_child_names:
+                            for child_dg_name in dg_descendants:
                                 child_dg = root.find("./devices/entry/device-group/entry[@name='" + child_dg_name + "']")
                                 ch_post_rulebase = child_dg.find("./post-rulebase")
                                 ch_pre_rulebase = child_dg.find("./pre-rulebase")
@@ -136,9 +153,9 @@ for key in pa_all_dgs:
                 if pre_rulebase is None or (len(pre_rulebase) > 0 and addr_name not in str(ET.tostring(pre_rulebase))):
                     if post_rulebase is None or (len(post_rulebase) > 0 and addr_name not in str(ET.tostring(post_rulebase))):
                         if address_groups is None or (len(address_groups) > 0 and addr_name not in str(ET.tostring(address_groups))):
-                            if len(dg_all_child_names) > 0:
+                            if len(dg_descendants) > 0:
                                 obj_used = False
-                                for child_dg_name in dg_all_child_names:
+                                for child_dg_name in dg_descendants:
                                     child_dg = root.find("./devices/entry/device-group/entry[@name='" + child_dg_name + "']")
                                     ch_post_rulebase = child_dg.find("./post-rulebase")
                                     ch_pre_rulebase = child_dg.find("./pre-rulebase")
