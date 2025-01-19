@@ -4,15 +4,16 @@
 #
 # Description:
 # -------------
-# This script find the used fqdn objects in all panorama device-group hierarchies.
+# This script find the used fqdn objects in all panorama device-group hierarchies
+# and list the number of the fqdn objects per device-group.
 #
 import xml.etree.ElementTree as ET
 import time
 import socket
 import json
 
-file_path = 'C:/Users/dakos/Downloads/'
-xml_input = file_path + '12257.xml'
+file_path = 'C:/Users/akdaniel/Downloads/running-config/'
+xml_input = file_path + 'running-config.xml'
 xml_output = xml_input.replace('.xml','_mod.xml')
 time_str = time.strftime("%Y%m%d_%H%M%S")
 result_output = file_path + 'notused_objects_' + time_str + '.txt'
@@ -64,7 +65,7 @@ ro_element = root.find("./readonly")
 dg_children = find_children(ro_element)
 print("load time:", time.strftime("%Y%m%d_%H%M%S"))
 
-fqdn_count = {}
+fqdns = {}
 
 pa_all_dgs = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
 for key in pa_all_dgs:
@@ -75,8 +76,8 @@ for key in pa_all_dgs:
         else:
             dg_name = key
         print(dg_name)
-        if dg_name not in fqdn_count:
-            fqdn_count[dg_name] = {}
+        if dg_name not in fqdns:
+            fqdns[dg_name] = {}
         my_ch_list = []
         dg_descendants = find_descendants(dg_children, dg_name)
         addresses = dg.find("./address")
@@ -90,10 +91,10 @@ for key in pa_all_dgs:
             for addr_grp in address_groups:
                 addr_grp_name = addr_grp.attrib["name"]
                 # addr-group in addr-group check is missing!!!
-                #print(dg_name, addr_grp_name)
-                #print(dg_name, addr_grp_name, "pre-rules")
+                #print(dg_name, ' address-group: ', addr_grp_name, " dg descendants: ", dg_descendants)
+                #print(dg_name, ' address-group: ', addr_grp_name, " pre-rules")
                 if pre_rulebase is None or (len(pre_rulebase) > 0 and addr_grp_name not in str(ET.tostring(pre_rulebase))):
-                    #print(dg_name, addr_grp_name, "post-rules")
+                    #print(dg_name, ' address-group: ', addr_grp_name, " post-rules")
                     if post_rulebase is None or (len(post_rulebase) > 0 and addr_grp_name not in str(ET.tostring(post_rulebase))):
                         if len(dg_descendants) > 0:
                             obj_used = False
@@ -102,15 +103,15 @@ for key in pa_all_dgs:
                                 ch_post_rulebase = child_dg.find("./post-rulebase")
                                 ch_pre_rulebase = child_dg.find("./pre-rulebase")
                                 ch_address_groups = child_dg.find("./address-group")
-                                #print("child dg: ", child_dg_name, addr_grp_name, "pre-rules")
+                                #print("child dg: ", child_dg_name, ' address-group: ', addr_grp_name, " pre-rules")
                                 if ch_pre_rulebase is not None and (len(ch_pre_rulebase) > 0 and addr_grp_name in str(ET.tostring(ch_pre_rulebase))):
                                     obj_used = True
                                     break
-                                #print("child dg: ", child_dg_name, addr_grp_name, "post-rules")
+                                #print("child dg: ", child_dg_name, ' address-group: ', addr_grp_name, " post-rules")
                                 if ch_post_rulebase is not None and (len(ch_post_rulebase) > 0 and addr_grp_name in str(ET.tostring(ch_post_rulebase))):
                                     obj_used = True
                                     break
-                                #print("child dg: ", child_dg_name, addr_grp_name, "address-groups")
+                                #print("child dg: ", child_dg_name, ' address-group: ', addr_grp_name, " address-group")
                                 if ch_address_groups is not None and (len(ch_address_groups) > 0 and addr_grp_name in str(ET.tostring(ch_address_groups))):
                                     obj_used = True
                                     break
@@ -143,46 +144,41 @@ for key in pa_all_dgs:
                     except Exception:
                         # fail gracefully!
                         result += "{c1}, {c2}, {c3}, {c4} {c5}\n".format(c1="address", c2=dg_name, c3=addr_name, c4=addr_type, c5="not-resolvable")
+                    #print(dg_name, ' address: ', addr_name, " dg descendants: ", dg_descendants)
+                    #print(dg_name, ' address: ', addr_name, " pre-rules, post-rules, address-groups")
                     if pre_rulebase is not None and (len(pre_rulebase) > 0 and addr_name in str(ET.tostring(pre_rulebase))):
-                        #print("dg: ", dg_name, addr_name, " pre-rules")
-                        # count it
-                        fqdn_count[dg_name][addr_name] = 1
+                        fqdns[dg_name][addr_name] = 1
+                        
                     elif post_rulebase is not None and (len(post_rulebase) > 0 and addr_name in str(ET.tostring(post_rulebase))):
-                        #print("dg: ", dg_name, addr_name, " post-rules")
-                        # count it
-                        fqdn_count[dg_name][addr_name] = 1
+                        fqdns[dg_name][addr_name] = 1
+                        
                     elif address_groups is not None and (len(address_groups) > 0 and addr_name in str(ET.tostring(address_groups))):
-                        #print("dg: ", dg_name, addr_name, " address-groups")
-                        # count it
-                        fqdn_count[dg_name][addr_name] = 1
+                        fqdns[dg_name][addr_name] = 1
+                        
                     if len(dg_descendants) > 0:
                         for child_dg_name in dg_descendants:
                             #print("child dg: ", child_dg_name)
-                            if child_dg_name not in fqdn_count:
-                                fqdn_count[child_dg_name] = {}
+                            if child_dg_name not in fqdns:
+                                fqdns[child_dg_name] = {}
                             child_dg = root.find("./devices/entry/device-group/entry[@name='" + child_dg_name + "']")
                             ch_post_rulebase = child_dg.find("./post-rulebase")
                             ch_pre_rulebase = child_dg.find("./pre-rulebase")
                             ch_address_groups = child_dg.find("./address-group")
+                            #print("child dg: ", child_dg_name, ' address-group: ', addr_grp_name, " pre-rules, post-rules, address-groups")
                             if ch_pre_rulebase is not None and (len(ch_pre_rulebase) > 0 and addr_name in str(ET.tostring(ch_pre_rulebase))):
-                                print("child dg: ", child_dg_name, addr_name, "pre-rules")
-                                # count it
-                                fqdn_count[child_dg_name][addr_name] = 1
+                                fqdns[child_dg_name][addr_name] = 1
+                                
                             elif ch_post_rulebase is not None and (len(ch_post_rulebase) > 0 and addr_name in str(ET.tostring(ch_post_rulebase))):
-                                #print("child dg: ", child_dg_name, addr_name, "post-rules")
-                                # count it
-                                fqdn_count[child_dg_name][addr_name] = 1
+                                fqdns[child_dg_name][addr_name] = 1
 
                             elif ch_address_groups is not None and (len(ch_address_groups) > 0 and addr_name in str(ET.tostring(ch_address_groups))):
-                                #print("child dg: ", child_dg_name, addr_name, "address-groups")
-                                # count it
-                                fqdn_count[child_dg_name][addr_name] = 1
+                                fqdns[child_dg_name][addr_name] = 1
 
 
-for dg_name in fqdn_count:
-    print(dg_name, " : ", len(fqdn_count[dg_name]))
+for dg_name in fqdns:
+    print(dg_name, " : ", len(fqdns[dg_name]))
 
-json_string = json.dumps(fqdn_count,
+json_string = json.dumps(fqdns,
                          allow_nan=True,
                          indent=6)
 
@@ -191,8 +187,8 @@ print(json_string)
 with open(result_output, 'w') as fp:
     fp.write(result)
     fp.write("------------------------------------------------------------------------------------------------")
-    for dg_name in fqdn_count:
-        line = dg_name + " : " + str(len(fqdn_count[dg_name])) + "\n"
+    for dg_name in fqdns:
+        line = dg_name + " : " + str(len(fqdns[dg_name])) + "\n"
         fp.write(line)
     fp.write("------------------------------------------------------------------------------------------------")
     fp.write(json_string)
