@@ -45,7 +45,7 @@ def find_descendants(dg_children, parent_dg):
     
     return dg_descendants
 
-# Function to find all anchestors for a device-group recursively
+# Function to find all ancestors for a device-group recursively
 def find_ancestors(ro_element, child_dg):
         
     dg = ro_element.find("./devices/entry/device-group/entry[@name='" + child_dg + "']")
@@ -87,12 +87,12 @@ dg_name = 'america'
 dg_list = find_descendants(dg_children, dg_name)
 print(f'descendants for the device-group {dg_name} : {dg_list}')
 
-# Print anchestors for the given device-group
+# Print ancestors for the given device-group
 dg_name = 'paris'
 dg_list = find_ancestors(ro_element, dg_name)
-print(f'anchestors of {dg_name} device-group:  {dg_list}')
+print(f'ancestors of {dg_name} device-group:  {dg_list}')
 
-# Iterate over the device-groups from paris perspective
+# Iterate over the device-group policies from paris perspective
 rule_pos_list: list[str] = ["pre", "post"]
 print(f'the right order to check rulebase objects for the device-group {dg_name}:')
 dg_list.append(dg_name)
