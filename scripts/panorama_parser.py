@@ -93,13 +93,18 @@ dg_list = find_ancestors(ro_element, dg_name)
 print(f'anchestors of {dg_name} device-group:  {dg_list}')
 
 # Iterate over the device-groups from paris perspective
-print(f'the order to check rulebase objects for the device-group {dg_name}:')
+rule_pos_list: list[str] = ["pre", "post"]
+print(f'the right order to check rulebase objects for the device-group {dg_name}:')
 dg_list.append(dg_name)
-for dg in reversed(dg_list):
-    print(dg)
+for rule_pos in rule_pos_list:
+    print(f'rule position {rule_pos}:')
+    xpath_rulebase = "./" + rule_pos + "-rulebase"
+    for dg in reversed(dg_list):
+        print(f'device-group {dg}, with rulebase {rule_pos}-rulebase')
 
-# Iterate over all device-group in the xml including shared generally
+# Iterate over all device-group pre and post rulebase in the xml including shared generally
 print('all device-groups configured:')
+rule_pos_list: list[str] = ["pre", "post"]
 pa_all_dgs = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
 for key in pa_all_dgs:
     xpath = pa_all_dgs[key]
@@ -108,4 +113,7 @@ for key in pa_all_dgs:
             dg_name = dg.attrib["name"]
         else:
             dg_name = key
-        print(dg_name)
+        for rule_pos in rule_pos_list:
+            xpath_rulebase = "./" + rule_pos + "-rulebase"
+            dg_rulebase = dg.find(xpath_rulebase)
+            print(f'device-group {dg_name}, with rulebase {rule_pos}-rulebase')
