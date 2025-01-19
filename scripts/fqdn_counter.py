@@ -6,6 +6,7 @@
 # -------------
 # This script find the used fqdn objects in all panorama device-group hierarchies
 # and list the number of the fqdn objects per device-group.
+# it also checks if the fqdn is resolvable and if not it lists it in the output file.
 #
 import xml.etree.ElementTree as ET
 import time
