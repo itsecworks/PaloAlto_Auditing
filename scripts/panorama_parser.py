@@ -1,6 +1,5 @@
 import xml.etree.ElementTree as ET
 import json
-import pdb
 
 # Path to the Panorama XML configuration file
 xml_file = 'C:/temp/csaba/config.xml'
@@ -75,23 +74,32 @@ def build_tree(dg_children, parent):
 dg_children = find_children(ro_element)
 
 # Build the hierarchical tree starting from the root
-dg_hierarhcy = build_tree(dg_children, 'shared')
-
+dg_name = 'shared'
+dg_hierarhcy = build_tree(dg_children, dg_name)
 # Convert the family tree to JSON
 dg_hierarhcy_json = json.dumps(dg_hierarhcy, indent=2)
-
 # Print the family tree in JSON format
+print(f'tree view for the device-group {dg_name}:')
 print(dg_hierarhcy_json)
 
 # Print descendants for the given device-group
-dg_list = find_descendants(dg_children, "america")
-print(dg_list)
+dg_name = 'america'
+dg_list = find_descendants(dg_children, dg_name)
+print(f'descendants for the device-group {dg_name} : {dg_list}')
 
 # Print anchestors for the given device-group
+dg_name = 'paris'
 dg_list = find_ancestors(ro_element, "paris")
-print(dg_list)
+print(f'anchestors of {dg_name} device-group:  {dg_list}')
 
-# Iterate over all device-group in the xml including shared
+# Iterate over the device-groups from paris perspective
+print(f'the order to check rulebase objects for the device-group {dg_name}:')
+dg_list.append(dg_name)
+for dg in reversed(dg_list):
+    print(dg)
+
+# Iterate over all device-group in the xml including shared generally
+print('all device-groups configured:')
 pa_all_dgs = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
 for key in pa_all_dgs:
     xpath = pa_all_dgs[key]
