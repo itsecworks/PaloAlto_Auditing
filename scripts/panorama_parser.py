@@ -89,7 +89,7 @@ print(f'descendants for the device-group {dg_name} : {dg_list}')
 
 # Print anchestors for the given device-group
 dg_name = 'paris'
-dg_list = find_ancestors(ro_element, "paris")
+dg_list = find_ancestors(ro_element, dg_name)
 print(f'anchestors of {dg_name} device-group:  {dg_list}')
 
 # Iterate over the device-groups from paris perspective
