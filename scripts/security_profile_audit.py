@@ -5,25 +5,72 @@
 # Description:
 # -------------
 # This script find the security rules and the security profile settings within panorama device-group hierarchy and give a report on their usage like no SPG or what kind of SPG and just SP with its members.
+# 
+# Extended feature list:
+# ----------------------
+# 1. We list the rules disabled or enabled state. Even if the rule disabled, ther spg setting counts.
 #
+# 2. we list the profile sets for profile sets in rule or for profile group in rule
+# 
+# 3. We list the spyware medium level action. Medium level should be block according to the best practice.
+#
+# 4. We list the custom url category actions if url profile is used. 3 fields added: blocks, alerts, allows.
+#
+# 5. ransomware action checked and listed as well.
+#
+# 6. allowed spgs in json:
+#
+# The script contains a json file that contains the allowed spg names per root or sub-root device-group.
+# while auditing the spgs we compare the spg name with the allowed spg names set in json. The column in csv is "valid_spg" that has False or True value.
+# The json is part of the code it can be set as an external file if needed.
+
 import xml.etree.ElementTree as ET
 from typing import Any, List, Set, Dict
 from xml.etree.ElementTree import Element, ElementTree
 import time
 
+
+def check_allowed_spg(devg_name, dg_ancestors, spg_name) -> bool:
+    """
+
+    :param devg_name: name of the device-group
+    :param dg_ancestors: list if the device-groups ancestors
+    :param spg_name: security profile group name
+    :return: If spg name is on the allowed list it gives True in return, otherwise the result is False
+    :rtype: bool
+    """
+    dg_ancestors.append(devg_name)
+    # find the nearest ancestor from the allowed spgs dictionary to the input device-group
+    position_old = 0
+    for dg in allowed_spgs:
+        if dg in dg_ancestors:
+            position_new = dg_ancestors.index(dg)
+            if position_new > position_old:
+                position_old = position_new
+
+    # check if one of the nearest ancestors spgs is used.
+    highest_parent_dg = dg_ancestors[position_old]
+    if spg_name not in allowed_spgs[highest_parent_dg]:
+        #print("wrong SPG used in the enviroment for device-group: ", devg_name)
+        #print("expected SPGS here: ")
+        #print(allowed_spgs[highest_parent_dg])
+        return False
+    else:
+        return True
+
 # Function to find all anchestors for a device-group recursively
 def find_ancestors(ro_element, child_dg):
-        
+
     dg = ro_element.find("./devices/entry/device-group/entry[@name='" + child_dg + "']")
     if dg.find('./parent-dg') is not None and len(dg.find('./parent-dg').text) > 0:
-            parent_dg = dg.find('./parent-dg').text
-            # Recursively collect ancestors from the parent
-            ancestors = find_ancestors(ro_element, parent_dg)
-            # Add the current parent to the list of ancestors
-            ancestors.append(parent_dg)
-            return ancestors
-    
-    # Base case: If there is no parent (None or no text in tag parent-dg), return 'shared'    
+        parent_dg = dg.find('./parent-dg').text
+        # Recursively collect ancestors from the parent
+        ancestors = find_ancestors(ro_element, parent_dg)
+        # Add the current parent to the list of ancestors
+        ancestors.append(parent_dg)
+        return ancestors
+
+    # Base case: If there is no parent (None or no text in tag parent-dg), return 'shared'
     else:
         return ['shared']
 
@@ -49,7 +96,8 @@ def get_profile_names(profile_data: Element) -> str:
     """
     profile_list: list[str] = []
     element: str
-    profiles_lst: list[str] = ["virus", "spyware", "vulnerability", "url-filtering", "file-blocking", "wildfire-analysis"]
+    profiles_lst: list[str] = ["virus", "spyware", "vulnerability", "url-filtering", "file-blocking",
+                               "wildfire-analysis"]
     if len(profile_data) == 0:
         profile_list_str = "empty..."
     else:
@@ -214,25 +262,30 @@ def security_profile_audit_by_rules(devg_name: str, devg_rulebase: Element) -> s
             # profile-setting exists
             cust_url_cat_action_dict = {}
             spyware_mdm_action = ""
-            if rule_xml.find("./profile-setting") and rule_xml.find("./action").text == "allow":
+            if rule_xml.find("./profile-setting") is not None and rule_xml.find("./action").text == "allow":
                 # group used in profile setting
-                if rule_xml.find("./profile-setting/group"):
+                if rule_xml.find("./profile-setting/group") is not None:
                     rule_name = rule_xml.attrib["name"]
                     action = rule_xml.find("./action").text
-                    if str(rule_xml.find("./to/member").text).lower() == "trust" and str(rule_xml.find("./from/member").text).lower() == "trust":
+                    if str(rule_xml.find("./to/member").text).lower() == "trust" and str(
+                            rule_xml.find("./from/member").text).lower() == "trust":
                         print(rule_name, "is trust to trust")
                     if rule_xml.find("./disabled") is not None:
                         disabled_state = rule_xml.find("./disabled").text
                     else:
                         disabled_state = "no"
                     rule_spg_name = rule_xml.find("./profile-setting/group/member").text
+
+                    # check if the spg is valid based on the json with dg and SPG orders
+                    valid_spg = check_allowed_spg(devg_name, dg_ancestors, rule_spg_name)
+
                     # find the spg through the dg hierarchy
                     spg_xml = get_element_by_name(rule_spg_name, devg_name, spg_xpath)
                     profiles_str = get_profile_names(spg_xml)
                     # get medium level spyware by function
                     spyware_mdm_action = get_spyware_profile_action(spg_xml, devg_name)
                     # get custom url category actions by function
-                    cust_url_cat_action_dict = get_custom_url_cat_action(spg_xml, dg_name)
+                    cust_url_cat_action_dict = get_custom_url_cat_action(spg_xml, devg_name)
                     cust_url_cat_action_block_str = "+".join(cust_url_cat_action_dict["block"])
                     cust_url_cat_action_alert_str = "+".join(cust_url_cat_action_dict["alert"])
                     cust_url_cat_action_allow_str = "+".join(cust_url_cat_action_dict["allow"])
@@ -243,38 +296,45 @@ def security_profile_audit_by_rules(devg_name: str, devg_rulebase: Element) -> s
                         dict_pgs[devg_name][rule_spg_name]["set"] = profiles_str
                     else:
                         dict_pgs[devg_name][rule_spg_name]["count"] += 1
-                    csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(c0=dg_anc_str,
-                                                                                                 c1=devg_name,
-                                                                                                 c2=rulebase_pos,
-                                                                                                 c3=rule_name,
-                                                                                                 c4=action,
-                                                                                                 c5=rule_spg_name,
-                                                                                                 c6=profiles_str,
-                                                                                                 c7=disabled_state,
-                                                                                                 c8=spyware_mdm_action,
-                                                                                                 c9=cust_url_cat_action_block_str,
-                                                                                                 c10=cust_url_cat_action_alert_str,
-                                                                                                 c11=cust_url_cat_action_allow_str)
+                    csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c55}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(
+                        c0=dg_anc_str,
+                        c1=devg_name,
+                        c2=rulebase_pos,
+                        c3=rule_name,
+                        c4=action,
+                        c5=rule_spg_name,
+                        c55=valid_spg,
+                        c6=profiles_str,
+                        c7=disabled_state,
+                        c8=spyware_mdm_action,
+                        c9=cust_url_cat_action_block_str,
+                        c10=cust_url_cat_action_alert_str,
+                        c11=cust_url_cat_action_allow_str)
                 # empty group or profiles used in profile setting
-                elif (rule_xml.find("./profile-setting/group") is not None and len(rule_xml.find("./profile-setting/group")) == 0) or (rule_xml.find("./profile-setting/profiles") is not None and len(rule_xml.find("./profile-setting/profiles")) == 0):
+                elif (rule_xml.find("./profile-setting/group") is not None and len(
+                        rule_xml.find("./profile-setting/group")) == 0) or (
+                        rule_xml.find("./profile-setting/profiles") is not None and len(
+                        rule_xml.find("./profile-setting/profiles")) == 0):
                     rule_name = rule_xml.attrib["name"]
                     action = rule_xml.find("./action").text
                     if rule_xml.find("./disabled") is not None:
                         disabled_state = rule_xml.find("./disabled").text
                     else:
                         disabled_state = "no"
-                    csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(c0=dg_anc_str,
-                                                                                                 c1=devg_name,
-                                                                                                 c2=rulebase_pos,
-                                                                                                 c3=rule_name,
-                                                                                                 c4=action,
-                                                                                                 c5="no-profile-group2",
-                                                                                                 c6="no-profile-setting2",
-                                                                                                 c7=disabled_state,
-                                                                                                 c8="NA",
-                                                                                                 c9="NA",
-                                                                                                 c10="NA",
-                                                                                                 c11="NA")
+                    csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c55}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(
+                        c0=dg_anc_str,
+                        c1=devg_name,
+                        c2=rulebase_pos,
+                        c3=rule_name,
+                        c4=action,
+                        c5="no-profile-group2",
+                        c55=False,
+                        c6="no-profile-setting2",
+                        c7=disabled_state,
+                        c8="NA",
+                        c9="NA",
+                        c10="NA",
+                        c11="NA")
                     c += 1
 
                 # profiles used in profile setting
@@ -304,18 +364,20 @@ def security_profile_audit_by_rules(devg_name: str, devg_rulebase: Element) -> s
                         dict_pgs[devg_name][profiles_str]["set"] = profiles_str
                     else:
                         dict_pgs[devg_name][profiles_str]["count"] += 1
-                    csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(c0=dg_anc_str,
-                                                                                                 c1=devg_name,
-                                                                                                 c2=rulebase_pos,
-                                                                                                 c3=rule_name,
-                                                                                                 c4=action,
-                                                                                                 c5="no-profile-group",
-                                                                                                 c6=profiles_str,
-                                                                                                 c7=disabled_state,
-                                                                                                 c8=spyware_mdm_action,
-                                                                                                 c9=cust_url_cat_action_block_str,
-                                                                                                 c10=cust_url_cat_action_alert_str,
-                                                                                                 c11=cust_url_cat_action_allow_str)
+                    csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c55}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(
+                        c0=dg_anc_str,
+                        c1=devg_name,
+                        c2=rulebase_pos,
+                        c3=rule_name,
+                        c4=action,
+                        c5="no-profile-group",
+                        c55=False,
+                        c6=profiles_str,
+                        c7=disabled_state,
+                        c8=spyware_mdm_action,
+                        c9=cust_url_cat_action_block_str,
+                        c10=cust_url_cat_action_alert_str,
+                        c11=cust_url_cat_action_allow_str)
 
             # no profile-setting at all
             elif rule_xml.find("./profile-setting") is None and rule_xml.find("./action").text == "allow":
@@ -325,50 +387,114 @@ def security_profile_audit_by_rules(devg_name: str, devg_rulebase: Element) -> s
                     disabled_state = rule_xml.find("./disabled").text
                 else:
                     disabled_state = "no"
-                csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(c0=dg_anc_str,
-                                                                                             c1=devg_name,
-                                                                                             c2=rulebase_pos,
-                                                                                             c3=rule_name, c4=action,
-                                                                                             c5="no-profile-group",
-                                                                                             c6="no-profile-setting",
-                                                                                             c7=disabled_state,
-                                                                                             c8="NA",
-                                                                                             c9="NA",
-                                                                                             c10="NA",
-                                                                                             c11="NA")
+                csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c55}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}\n".format(
+                    c0=dg_anc_str,
+                    c1=devg_name,
+                    c2=rulebase_pos,
+                    c3=rule_name, c4=action,
+                    c5="no-profile-group",
+                    c55=False,
+                    c6="no-profile-setting",
+                    c7=disabled_state,
+                    c8="NA",
+                    c9="NA",
+                    c10="NA",
+                    c11="NA")
                 c += 1
 
         # counter for rules without profile-setting
-        csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}, {c12}\n".format(c0=dg_anc_str,
-                                                                                           c1=devg_name,
-                                                                                           c2=rulebase_pos,
-                                                                                           c3="NA", c4="NA",
-                                                                                           c5="no-profile-group",
-                                                                                           c6="no-profile-setting",
-                                                                                           c7="NA", c8="NA",
-                                                                                           c9="NA", c10="NA", c11="NA",
-                                                                                           c12=str(c))
+        csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c55}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}, {c12}\n".format(
+            c0=dg_anc_str,
+            c1=devg_name,
+            c2=rulebase_pos,
+            c3="NA", c4="NA",
+            c5="no-profile-group",
+            c55=False,
+            c6="no-profile-setting",
+            c7="NA", c8="NA",
+            c9="NA", c10="NA", c11="NA",
+            c12=str(c))
 
         # counter for groups in profile-setting
         for spg_name in dict_pgs[devg_name]:
-            csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}, {c12}\n".format(c0=dg_anc_str,
-                                                                                               c1=devg_name,
-                                                                                               c2=rulebase_pos,
-                                                                                               c3="NA", c4="NA",
-                                                                                               c5=spg_name,
-                                                                                               c6=str(dict_pgs[devg_name][spg_name]["set"]),
-                                                                                               c7="NA",
-                                                                                               c8="NA",
-                                                                                               c9="NA",
-                                                                                               c10="NA",
-                                                                                               c11="NA",
-                                                                                               c12=str(dict_pgs[devg_name][spg_name]["count"]))
+            csv_lines += "{c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c55}, {c6}, {c7}, {c8}, {c9}, {c10}, {c11}, {c12}\n".format(
+                c0=dg_anc_str,
+                c1=devg_name,
+                c2=rulebase_pos,
+                c3="NA", c4="NA",
+                c5=spg_name,
+                c55="NA",
+                c6=str(dict_pgs[devg_name][spg_name]["set"]),
+                c7="NA",
+                c8="NA",
+                c9="NA",
+                c10="NA",
+                c11="NA",
+                c12=str(dict_pgs[devg_name][spg_name]["count"]))
 
     return csv_lines
 
 
-file_path = 'C:/Users/akdaniel/Downloads/running-config/'
-xml_input = file_path + 'running-config.xml'
+file_path = 'C:/Users/fwadmin/Downloads/Panorama_20241212/'
+xml_input = file_path + 'running-configuration.xml'
+
+allowed_spgs: dict[str, list[str]] = {
+  "shared": [
+    "SPG-MYCO-FACTORY",
+    "SPG-MYCO-DMZ",
+    "SPG-MYCO-RAZ",
+    "SPG-MYCO-RAZ-APP",
+    "SPG-MYCO-RAZ-SMTP",
+    "SPG-MYCO-RAZ-FTP",
+    "SPG-MYCO-CLOUD1-NB",
+    "SPG-MYCO-CLOUD1-SB",
+    "SPG-MYCO-CLOUD1-EW",
+    "SPG-MYCO-FACTORY",
+    "SPG-MYCO-Prisma-Default",
+    "SPG-MYCO-Prisma-Extended",
+    "SPG-MYCO-Prisma-Guest",
+    "SPG-MYCO-Prisma-Internal",
+    "SPG-MYCO-Prisma-Exceptions",
+    "SPG-MYCO-Prisma-Services",
+    "SPG-MYCO-Prisma-Internet-FB",
+    "SPG-MYCO-Sec-Audit"
+  ],
+  "FACTORY02": [
+    "SPG-MYCO-FACTORY"
+  ],
+  "DMZ": [
+    "SPG-MYCO-DMZ"
+  ],
+  "DMZ-RAZ": [
+    "SPG-MYCO-RAZ",
+    "SPG-MYCO-RAZ-APP",
+    "SPG-MYCO-RAZ-SMTP",
+    "SPG-MYCO-RAZ-FTP"
+  ],
+  "Northbridge": [
+    "SPG-MYCO-CLOUD1-NB"
+  ],
+  "Southbridge": [
+    "SPG-MYCO-CLOUD1-SB"
+  ],
+  "EastWest": [
+    "SPG-MYCO-CLOUD1-EW"
+  ],
+  "Internal_Zoning": [
+    "SPG-MYCO-FACTORY"
+  ],
+  "Prisma_Access": [
+    "SPG-MYCO-Prisma-Default",
+    "SPG-MYCO-Prisma-Extended",
+    "SPG-MYCO-Prisma-Guest",
+    "SPG-MYCO-Prisma-Internal",
+    "SPG-MYCO-Prisma-Exceptions",
+    "SPG-MYCO-Prisma-Services",
+    "SPG-MYCO-Prisma-Internet-FB",
+    "SPG-MYCO-Sec-Audit"
+  ]
+}
+
 # xml_output = xml_input.replace('.xml','_mod.xml')
 time_str = time.strftime("%Y%m%d_%H%M%S")
 print("start: ", time_str)
@@ -378,7 +504,7 @@ tree: ElementTree = ET.parse(xml_input)
 root: Element | Any = tree.getroot()
 ro_element: Element | None = root.find("./readonly")
 
-result: str = ("dg_parents, dg_name, rule_position, rule_name, action, profile-group, profile-settings, "
+result: str = ("dg_parents, dg_name, rule_position, rule_name, action, profile-group, valid_spg, profile-settings, "
                "disabled_state, spyware-medium-action, custom_url_blocks, custom_url_alerts, custom_url_allows, sum\n")
 rule_pos_list: list[str] = ["pre", "post"]
 pa_all_dgs: dict[str, str] = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
