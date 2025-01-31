@@ -17,7 +17,8 @@ def find_children(ro_element):
     dg_children['shared'] = []
     for dg in ro_element.findall('./devices/entry/device-group/entry'):
         dg_name = dg.get('name')
-        if dg.find('./parent-dg') is not None and len(dg.find('./parent-dg').text) > 0:
+        dg_parent = dg.find('./parent-dg')
+        if dg_parent is not None and len(dg_parent.text) > 0:
             parent_dg_name = dg.find('./parent-dg').text
         else:
             parent_dg_name = 'shared'
@@ -49,7 +50,8 @@ def find_descendants(dg_children, parent_dg):
 def find_ancestors(ro_element, child_dg):
         
     dg = ro_element.find("./devices/entry/device-group/entry[@name='" + child_dg + "']")
-    if dg.find('./parent-dg') is not None and len(dg.find('./parent-dg').text) > 0:
+    dg_parent = dg.find('./parent-dg')
+    if dg_parent is not None and len(dg_parent.text) > 0:
             parent_dg = dg.find('./parent-dg').text
             # Recursively collect ancestors from the parent
             ancestors = find_ancestors(ro_element, parent_dg)
