@@ -1,0 +1,206 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+import pdb
+# Author: Ist wurst...
+#
+# Description:
+# -------------
+# This script calculates the objects per type within the panorama device-group hierarchy with the shared.
+#
+import xml.etree.ElementTree as ET
+import datetime
+import time
+import os
+import platform
+import json
+import pdb
+
+
+file_path = 'C:/Users/dakos/Downloads/Panorama_20250227/'
+xml_input = file_path + '13265.xml'
+time_str = time.strftime("%Y%m%d_%H%M%S")
+result_output = file_path + 'paloalto_object_counts_' + time_str + '.ndjson'
+result = ''
+tree = ET.parse(xml_input)
+root = tree.getroot()
+ro_element = root.find("./readonly")
+
+
+# Function to find all ancestors for a device-group recursively
+def find_ancestors(ro_element, child_dg):
+
+    if "shared" == child_dg:
+        return ["shared"]
+    dg = ro_element.find("./devices/entry/device-group/entry[@name='" + child_dg + "']")
+    dg_parent = dg.find('./parent-dg')
+    if dg_parent is not None and len(dg_parent.text) > 0:
+        parent_dg = dg.find('./parent-dg').text
+        # Recursively collect ancestors from the parent
+        ancestors = find_ancestors(ro_element, parent_dg)
+        # Add the current parent to the list of ancestors
+        ancestors.append(parent_dg)
+        return ancestors
+
+    # Base case: If there is no parent (None or no text in tag parent-dg), return 'shared'
+    else:
+        return ['shared']
+
+
+def get_creation_date(path_to_file):
+    """
+    Try to get the date that a file was created, falling back to when it was
+    last modified if that isn't possible.
+    See http://stackoverflow.com/a/39501288/1709587 for explanation.
+    """
+    if platform.system() == 'Windows':
+        return os.path.getctime(path_to_file)
+    else:
+        stat = os.stat(path_to_file)
+        try:
+            return stat.st_birthtime
+        except AttributeError:
+            # We're probably on Linux. No easy way to get creation dates here,
+            # so we'll settle for when its content was last modified.
+            return stat.st_mtime
+
+
+def rule_counter(dg_xml, dg_ancestors_lst):
+
+    rules_count_str = ''
+    rule_pos_list: list[str] = ["pre-rulebase", "post-rulebase"]
+    for rule_pos in rule_pos_list:
+        xpath_rulebase = "./" + rule_pos
+        dg_rulebase = dg_xml.find(xpath_rulebase)
+        if dg_rulebase is not None:
+            for rule_type in dg_rulebase:
+                rule_type_name = rule_type.tag
+                rule_list = rule_type.findall("./rules/entry")
+                if rule_list is not None:
+                    rules_count_str += '{' + '"date": "{c1}","device-group": "{c2}", "rule-position": "{c3}","object-type": "{c4}", "count": "{c5}", "anchestors": {c6}'.format(
+                        c1=str_date_time,
+                        c2=dg_name,
+                        c3=rule_pos,
+                        c4=rule_type_name,
+                        c5=len(rule_list),
+                        c6=dg_ancestors_lst) + '}\n'
+
+                    rules_count_str += rule_data_counter(rule_list, rule_pos, rule_type_name, dg_ancestors_lst)
+
+    return rules_count_str
+
+
+def rule_data_counter(rule_xml_list, rule_pos, rule_type, dg_ancestors_lst):
+
+    src_len = 0
+    dst_len = 0
+    for rule_xml in rule_xml_list:
+        source_xml = rule_xml.find("./source")
+        destination_xml = rule_xml.find("./destination")
+        if source_xml is not None:
+            src_len += len(source_xml)
+        if destination_xml is not None:
+            dst_len += len(destination_xml)
+
+    rules_member_count_str = '{' + '"date": "{c1}","device-group": "{c2}", "rule-position": "{c3}","object-type": "{c4}", "source_count": "{c5}", "destination_count": "{c6}", "anchestors": {c6}'.format(
+        c1=str_date_time,
+        c2=dg_name,
+        c3=rule_pos,
+        c4=rule_type,
+        c5=src_len,
+        c6=dst_len,
+        c7=dg_ancestors_lst) + '}\n'
+
+    return rules_member_count_str
+
+
+def group_member_counter(addr_grp_xml_list, dg_ancestors_str):
+
+    addr_grp_member_count = 0
+    for addr_grp_xml in addr_grp_xml_list:
+        addr_grp_members = addr_grp_xml.find("./static")
+        if addr_grp_members is not None:
+            addr_grp_member_count += len(addr_grp_members)
+        else:
+            print("non static addr grp with name: " + addr_grp_xml.get("name"))
+
+    addr_grp_member_count_str = '{' + '"date": "{c1}","device-group": "{c2}", "object-type": "{c3}","member_count": "{c4}", "anchestors": {c5}'.format(
+        c1=str_date_time,
+        c2=dg_name,
+        c3="address-group",
+        c4=addr_grp_member_count,
+        c5=dg_ancestors_str) + '}\n'
+
+    return addr_grp_member_count_str
+
+
+def addr_type_counter(addr_xml_list, dg_ancestors_str):
+
+    addr_type_count_str = ''
+    addr_types = ["ip-netmask", "ip-range", "fqdn"]
+    addr_count = {}
+    for addr_type in addr_types:
+        addr_count[addr_type] = 0
+
+    for addr_xml in addr_xml_list:
+        for addr_type in addr_types:
+            if addr_xml.find(addr_type) is not None:
+                addr_count[addr_type] += 1
+
+    for addr_type in addr_count:
+        addr_type_count_str += '{' + '"date": "{c1}","device-group": "{c2}", "object-type": "{c3}","count": "{c4}", "anchestors": {c5}'.format(
+                            c1=str_date_time,
+                            c2=dg_name,
+                            c3="address-" + addr_type,
+                            c4=addr_count[addr_type],
+                            c5=dg_ancestors_str) + '}\n'
+
+    return addr_type_count_str
+
+
+def object_counter(dg_xml, dg_ancestors_str):
+
+    obj_type_count_str = ''
+    objs_list = ['address', 'address-group', 'service', 'service-group']
+
+    for obj_type in objs_list:
+        obj_xpath = "./" + obj_type + "/entry"
+        obj_xml_list = dg_xml.findall(obj_xpath)
+        if obj_xml_list:
+            obj_count = len(dg_xml.findall(obj_xpath))
+        else:
+            obj_count = 0
+
+        obj_type_count_str += '{' + '"date": "{c1}","device-group": "{c2}", "object-type": "{c3}","count": "{c4}", "anchestors": {c5}'.format(
+            c1=str_date_time,
+            c2=dg_name,
+            c3=obj_type,
+            c4=obj_count,
+            c5=dg_ancestors_str) + '}\n'
+        if obj_type == 'address':
+            obj_type_count_str += addr_type_counter(obj_xml_list, dg_ancestors_str)
+        elif obj_type == 'address-group':
+            obj_type_count_str += group_member_counter(obj_xml_list, dg_ancestors_str)
+
+    return obj_type_count_str
+
+
+# the date is used from the file creation/ modification time.
+file_time = datetime.datetime.fromtimestamp(get_creation_date(xml_input))
+str_date_time = file_time.strftime("%Y-%m-%d %H:%M:%S")
+
+pa_all_dgs = {"shared": "./shared", "default": "./devices/entry/device-group/entry"}
+for key in pa_all_dgs:
+    xpath = pa_all_dgs[key]
+    for dg in root.findall(xpath):
+        if key == "default":
+            dg_name = dg.attrib["name"]
+        else:
+            dg_name = key
+        print(dg_name)
+        dg_anc_list = find_ancestors(ro_element, dg_name)
+        dg_anc_str = json.dumps(dg_anc_list)
+        result += object_counter(dg, dg_anc_str)
+        result += rule_counter(dg, dg_anc_str)
+
+with open(result_output, 'w') as fp:
+    fp.write(result)
