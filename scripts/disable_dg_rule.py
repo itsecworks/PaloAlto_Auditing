@@ -22,6 +22,17 @@ RULE_NAME = "testrule"
 # Disable SSL warnings (not recommended for production)
 requests.packages.urllib3.disable_warnings()
 
+# http request timeout
+TIMEOUT = 10  # seconds
+
+def safe_request(method, url, **kwargs):
+    try:
+        response = method(url, verify=False, timeout=TIMEOUT, **kwargs)
+        return response
+    except requests.exceptions.Timeout:
+        print(f"❌ Timeout when requesting URL: {url}")
+        exit(1)
+
 
 def get_rule():
     url = (
@@ -32,7 +43,8 @@ def get_rule():
         "X-PAN-KEY": API_KEY
     }
 
-    response = requests.get(url, headers=headers, verify=False)
+    response = safe_request(requests.get, url, headers=headers)
+    #response = requests.get(url, headers=headers, verify=False)
 
     if response.status_code == 200:
         print(f"✅ Successfully fetched rule '{RULE_NAME}'.")
@@ -72,7 +84,8 @@ def put_rule(rule_data):
         "entry": rule_entry
     }
 
-    response = requests.put(url, headers=headers, json=payload, verify=False)
+    response = safe_request(requests.put, url, headers=headers, json=payload)
+    #response = requests.put(url, headers=headers, json=payload, verify=False)
 
     if response.status_code == 200:
         print(f"✅ Successfully updated (disabled) rule '{RULE_NAME}'.")
@@ -85,7 +98,8 @@ def put_rule(rule_data):
 def commit_to_panorama():
     url = f"{PANORAMA_HOST}/api/?type=commit&cmd=<commit></commit>&key={API_KEY}"
 
-    response = requests.post(url, verify=False)
+    response = safe_request(requests.post, url)
+    #response = requests.post(url, verify=False)
 
     if response.status_code == 200:
         print("✅ Commit to Panorama started.")
@@ -111,7 +125,8 @@ def push_to_device_group():
 
     url = f"{PANORAMA_HOST}/api/?type=commit&cmd={encoded_cmd}&key={API_KEY}"
 
-    response = requests.post(url, verify=False)
+    response = safe_request(requests.post, url)
+    #response = requests.post(url, verify=False)
 
     if response.status_code == 200:
         print(f"✅ Push to device-group '{DEVICE_GROUP}' started.")
