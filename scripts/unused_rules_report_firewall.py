@@ -1,6 +1,9 @@
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
+# the best approach is the hitcounts from dataplane with api call on firewalls:
+# type=op&cmd=<show><rule-hit-count><vsys><vsys-name><entry name='vsys1'><rule-base><entry name='security'><rules><all/></rules></entry></rule-base></entry></vsys-name></vsys></rule-hit-count></show>
+
 # Sample XML data
 xml_data_fw = """
 <response status="success">
