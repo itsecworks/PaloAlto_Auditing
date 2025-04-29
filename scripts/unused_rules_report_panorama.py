@@ -2,8 +2,14 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+# output is on panorama with api call with the below arguments
+# type=op&cmd=<show><rule-hit-count><device-group><entry name='dg_ny-dc'><pre-rulebase><entry name='security'><rules><all/></rules></entry></pre-rulebase></entry></device-group></rule-hit-count></show>
+# REMARK:
+# it is not accurate enough, the best approach is the hitcounts from dataplane with api call:
+# type=op&cmd=<show><rule-hit-count><vsys><vsys-name><entry name='vsys1'><rule-base><entry name='security'><rules><all/></rules></entry></rule-base></entry></vsys-name></vsys></rule-hit-count></show>
+
 # XML input (you would normally load this from a file or API)
-xml_data = """
+xml_data_panorama = """
 <response status="success">
     <result>
         <rule-hit-count>
@@ -73,7 +79,7 @@ def find_unused_rules(rules, months_threshold=2):
     return old_unused_rules
 
 # Parse XML
-root = ET.fromstring(xml_data)
+root = ET.fromstring(xml_data_panorama)
 rules = root.findall('.//rules/entry')
 
 # Find and print old unused rules
