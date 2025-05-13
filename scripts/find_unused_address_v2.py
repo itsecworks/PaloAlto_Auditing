@@ -19,12 +19,12 @@ def is_resolve_fqdn(fqdns):
 
     for fqdn in fqdns:
         try:
-            socket.gethostbyname(fqdn)
-            result = "{h}: {a}\n".format(h=fqdn, a=True)
+            socket.gethostbyname(fqdn[1])
+            result = [fqdn[0], True]
 
         except Exception:
             # fail gracefully!
-            result = "{h}: {a}\n".format(h=fqdn, a=False)
+            result = [fqdn[0], False]
 
         resolvable_ips.append(result)
 
@@ -154,7 +154,8 @@ def get_object_names(dg, obj_type):
                 obj_list[obj_name] = get_members(entry, obj_items_xpath)
             elif 'fqdn' in obj_type and entry.find("fqdn") is not None:
                 # we need the value for the object name if fqdn to be able to resolve it.
-                obj_list[obj_name].add(entry.find("fqdn").text)
+                obj_list[obj_name] = {}
+                obj_list[obj_name] = entry.find("fqdn").text
             elif 'fqdn' not in obj_type:
                 obj_list.add(obj_name)
 
@@ -277,32 +278,45 @@ def main(argv):
         for fqdn in dg_data[dg]["fqdn"]:
             if fqdn not in dg_data[dg]["rulebase-addr"]:
                 used_fqdn = False
-                for dg_descendant in dg_data[dg]["descendants"]:
-                    if used_fqdn is False and fqdn in dg_data[dg_descendant]["rulebase-addr"]:
-                        used_fqdn = True
-                    elif used_fqdn is True and fqdn in dg_data[dg_descendant]["rulebase-addr"]:
-                        print("duplicated fqdn ", fqdn, " from dg ", dg_descendant, " with dg ", dg)
-                        f.write("duplicated fqdn " + fqdn + " from dg " + dg_descendant + " with dg " + dg + "\n")
-                if used_fqdn is False:
-                    print("not used fqdn ", fqdn, " from dg ", dg)
-                    f.write("not used fqdn " + fqdn + " from dg " + dg + "\n")
+            else:
+                used_fqdn = True
+            for dg_descendant in dg_data[dg]["descendants"]:
+                if used_fqdn is False and fqdn in dg_data[dg_descendant]["rulebase-addr"]:
+                    used_fqdn = True
+                if fqdn in dg_data[dg_descendant]["fqdn"]:
+                    print("duplicated fqdn name ", fqdn, " from dg ", dg, " in ", dg_descendant)
+                    f.write("duplicated fqdn name " + fqdn + " from dg " + dg + " in " + dg_descendant + "\n")
+            if used_fqdn is False:
+                print("not used fqdn ", fqdn, " from dg ", dg)
+                f.write("not used fqdn " + fqdn + " from dg " + dg + "\n")
 
         # here we resolve the fqdns to ip if exists. it is multithreaded.
         threads = list()
 
+        # since I cannot iterate over a dict with range and len as used for chunks :-)
+        # I convert the dict to list first
+        global resolvable_ips
+        resolvable_ips = []
+        fqdn_list = []
+        for fqdn in dg_data[dg]["fqdn"]:
+            fqdn_item = [fqdn, dg_data[dg]["fqdn"][fqdn]]
+            fqdn_list.append(fqdn_item)
+        # split up the list for multithreaded dns resolution check.
         chunk_size = 3
-        for i in range(0, len(dg_data[dg]["fqdn"]), chunk_size):
-            fqdns_chunk = dg_data[dg]["fqdn"][i:i + chunk_size]
+        for i in range(0, len(fqdn_list), chunk_size):
+            fqdns_chunk = fqdn_list[i:i + chunk_size]
             x = Thread(target=is_resolve_fqdn, args=(fqdns_chunk,))
             threads.append(x)
             x.start()
 
         for fqdns_chunk, thread in enumerate(threads):
             thread.join()
-        print(resolvable_ips)
+
+        for fqdn_list in resolvable_ips:
+            if not fqdn_list[1]:
+                print("not resolvable fqdn ", fqdn_list[0], " from dg ", dg)
+                f.write("not resolvable fqdn " + fqdn_list[0] + " from dg " + dg + "\n")
 
 
 if __name__ == "__main__":
-    global resolvable_ips
-    resolvable_ips = []
     main(sys.argv[1:])
