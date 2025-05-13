@@ -48,18 +48,21 @@ def find_descendants(dg_children, parent_dg):
 
 # Function to find all ancestors for a device-group recursively
 def find_ancestors(ro_element, child_dg):
-        
+
+    if "shared" in child_dg:
+        return []
+
     dg = ro_element.find("./devices/entry/device-group/entry[@name='" + child_dg + "']")
     dg_parent = dg.find('./parent-dg')
     if dg_parent is not None and len(dg_parent.text) > 0:
-            parent_dg = dg.find('./parent-dg').text
-            # Recursively collect ancestors from the parent
-            ancestors = find_ancestors(ro_element, parent_dg)
-            # Add the current parent to the list of ancestors
-            ancestors.append(parent_dg)
-            return ancestors
-    
-    # Base case: If there is no parent (None or no text in tag parent-dg), return 'shared'    
+        parent_dg = dg.find('./parent-dg').text
+        # Recursively collect ancestors from the parent
+        ancestors = find_ancestors(ro_element, parent_dg)
+        # Add the current parent to the list of ancestors
+        ancestors.append(parent_dg)
+        return ancestors
+
+    # Base case: If there is no parent (None or no text in tag parent-dg), return 'shared'
     else:
         return ['shared']
 
