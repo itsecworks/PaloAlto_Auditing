@@ -8,7 +8,7 @@ import urllib.parse
 import re
 
 # PAN-OS Firewall or Panorama details
-PANORAMA_HOST = "https://192.168.2.210"  # Change this
+PANORAMA_HOST = "192.168.2.210"  # Change this
 API_KEY = "LUFRPT...XhXRUptYSsrZw=="     # Change this
 
 # to get your key use this curl command
@@ -25,6 +25,7 @@ requests.packages.urllib3.disable_warnings()
 # http request timeout
 TIMEOUT = 10  # seconds
 
+
 def safe_request(method, url, **kwargs):
     try:
         response = method(url, verify=False, timeout=TIMEOUT, **kwargs)
@@ -35,15 +36,19 @@ def safe_request(method, url, **kwargs):
 
 
 def get_rule():
-    url = (
-        f"{PANORAMA_HOST}/restapi/v10.2/Policies/SecurityPreRules"
-        f"?location=device-group&device-group={DEVICE_GROUP}&name={RULE_NAME}"
-    )
+    url = "https://" + PANORAMA_HOST + "/restapi/v10.2/Policies/SecurityPreRules"
+
+    params = {
+        "location" : "device-group",
+        "device-group" : DEVICE_GROUP,
+        "name" : RULE_NAME
+    }
+
     headers = {
         "X-PAN-KEY": API_KEY
     }
 
-    response = safe_request(requests.get, url, headers=headers)
+    response = safe_request(requests.get, url, headers=headers, params=params)
     #response = requests.get(url, headers=headers, verify=False)
 
     if response.status_code == 200:
@@ -71,10 +76,14 @@ def put_rule(rule_data):
     rule_entry["disabled"] = "yes"
     rule_entry["tag"] = {"member": ["unused-rule"]}
 
-    url = (
-        f"{PANORAMA_HOST}/restapi/v10.2/Policies/SecurityPreRules"
-        f"?location=device-group&device-group={DEVICE_GROUP}&name={RULE_NAME}"
-    )
+     url = "https://" + PANORAMA_HOST + "/restapi/v10.2/Policies/SecurityPreRules"
+
+    params = {
+        "location" : "device-group",
+        "device-group" : DEVICE_GROUP,
+        "name" : RULE_NAME
+    }
+    
     headers = {
         "Content-Type": "application/json",
         "X-PAN-KEY": API_KEY
@@ -84,7 +93,7 @@ def put_rule(rule_data):
         "entry": rule_entry
     }
 
-    response = safe_request(requests.put, url, headers=headers, json=payload)
+    response = safe_request(requests.put, url, headers=headers, params=params, json=payload)
     #response = requests.put(url, headers=headers, json=payload, verify=False)
 
     if response.status_code == 200:
