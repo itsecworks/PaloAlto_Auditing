@@ -106,7 +106,7 @@ def output_parser_uptime(xml, xpath):
 
 def main(argv):
 
-    file_path = 'C:/Users/dakos/Downloads/'
+    file_path = 'C:/Temp/'
 
     parser = argparse.ArgumentParser(description='Collect hit counter for security rules.',
                                      epilog="And that's how you use xml api...")
@@ -124,13 +124,12 @@ def main(argv):
     parser.add_argument('-d', '--device',
                         dest='device',
                         help='IP or hostname of the Palo Alto Device (Panorama or Firewall',
-                        required=True)
+                        default='10.1.1.1')
 
     parser.add_argument('-k', '--hashkey',
                         help='Password hash for the logon on Palo Alto Panorama',
                         dest='hashkey',
-                        default='LUFRPT1kY1h....',
-                        required=True)
+                        default='LUFRPT1...')
 
     parser.add_argument('-g', '--device-group',
                         dest='device_group',
@@ -175,7 +174,7 @@ def main(argv):
             xpath = data_collector[key]['xpath']
             params = {
                 'type': 'op',
-                'key': args.pwd,
+                'key': args.hashkey,
                 'cmd': cmd
             }
             xml_response: str = get_api(device, params, args.log)
@@ -192,7 +191,7 @@ def main(argv):
                 for rule_name, age_in_days in rules:
                     print(f" - {rule_name} (Age: {age_in_days} days)")
 
-            with open(file_path + device + '_' + key + '.json', 'a') as fp:
+            with open(file_path + device + '_' + key + '.json', 'w') as fp:
                 json.dump(data, fp)
 
 if __name__ == "__main__":
