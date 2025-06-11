@@ -1,3 +1,11 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# Author: Ist wurst...
+#
+# Description:
+# -------------
+# This script downloads the application list from https://applipedia.paloaltonetworks.com with basic web scraping.
+
 from bs4 import BeautifulSoup
 import csv
 import requests
