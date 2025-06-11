@@ -1,3 +1,12 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# Author: Ist wurst...
+#
+# Description:
+# -------------
+# This script searches for rules with "any" in the src, dst ip and src, dst zone and in service.
+
+
 import xml.etree.ElementTree as ET
 import time
 
