@@ -29,7 +29,7 @@ def is_resolve_fqdn(fqdns):
         resolvable_ips.append(result)
 
 
-# Function to find all ancestors for a device-group recursively
+# Function to find all ancestors (parents, grandparents, great-grandparents...) for a device-group recursively
 def find_ancestors(ro_element, child_dg):
 
     if "shared" in child_dg:
@@ -50,7 +50,7 @@ def find_ancestors(ro_element, child_dg):
         return ['shared']
 
 
-# Function to find all descendants fora a device-group recursively
+# Function to find all descendants (children, grandchildren, and great-grandchildren...) for a device-group recursively
 def find_descendants(dg_children, parent_dg):
     dg_descendants = []  # List to store descendants of a device-group
     # Find all children of the given parent
@@ -69,8 +69,7 @@ def find_descendants(dg_children, parent_dg):
 # Function to find all children to each device-group
 def find_children(ro_element):
     # we create a dictionary with key as the device-group and with value as a list of direct child device-groups.
-    dg_children = {}
-    dg_children['shared'] = []
+    dg_children = {'shared': []}
     for dg in ro_element.findall('./devices/entry/device-group/entry'):
         dg_name = dg.get('name')
         if dg.find('./parent-dg') is not None and len(dg.find('./parent-dg').text) > 0:
@@ -86,34 +85,78 @@ def find_children(ro_element):
     return dg_children
 
 
-def resolve_group(dg_data, dg_name, group_name, visited=None):
+def resolve_group_to_gr_only(dg_data, dg_name, group_name, visited=None):
+
+    # this function collects groups with group members only.
+    # The result is a list of group names in groups for a given group and device-group.
     if visited is None:
         visited = set()
-    result = []
+    result_grps = []
 
     def helper(dg_name, group_name):
         if (dg_name, group_name) in visited:
+            print("loop in device-groups address-group detected!")
             return
         visited.add((dg_name, group_name))
-        group_items = dg_data.get(dg_name, {}).get("address-group", {}).get(group_name, [])
 
-        for item in group_items:
-            # First check if it's a direct address in this DG
-            if item in dg_data[dg_name].get("address", []):
-                result.append(item)
-            # Then check if it's another group in this DG
-            elif item in dg_data[dg_name].get("address-group", {}):
-                helper(dg_name, item)
+        # safely accessing nested dictionaries with get method. Get method returns None if key does not exist
+        # in get method we set the default values as well
+        group_members = dg_data.get(dg_name, {}).get("address-group", {}).get(group_name, [])
+
+        for gr_member in group_members:
+            # check if it's another group in this DG
+            if gr_member in dg_data[dg_name].get("address-group", {}):
+                result_grps.append(gr_member)
+                helper(dg_name, gr_member)
             else:
                 # Not found in current DG, check ancestors
                 reversed_ancestors = reversed(dg_data[dg_name]["ancestors"])
                 reversed_ancestors_list = list(reversed_ancestors)
                 for ancestor in reversed_ancestors_list:
-                    if item in dg_data[ancestor].get("address", []):
-                        result.append(item)
+                    if gr_member in dg_data[ancestor].get("address-group", {}):
+                        result_grps.append(gr_member)
+                        helper(ancestor, gr_member)
                         break
-                    elif item in dg_data[ancestor].get("address-group", {}):
-                        helper(ancestor, item)
+
+    helper(dg_name, group_name)
+    return result_grps
+
+
+def resolve_group_to_addr_only(dg_data, dg_name, group_name, visited=None):
+
+    # this function resolves group members if they are groups, as a result you get group members with addresses only.
+    if visited is None:
+        visited = set()
+    result = []
+    result_grps = []
+
+    def helper(dg_name, group_name):
+        if (dg_name, group_name) in visited:
+            print("loop in device-groups address-group detected!")
+            return
+        visited.add((dg_name, group_name))
+
+        # safely accessing nested dictionaries with get method
+        group_members = dg_data.get(dg_name, {}).get("address-group", {}).get(group_name, [])
+
+        for gr_member in group_members:
+            # First check if it's a direct address in this DG
+            if gr_member in dg_data[dg_name].get("address", []):
+                result.append(gr_member)
+            # Then check if it's another group in this DG
+            elif gr_member in dg_data[dg_name].get("address-group", {}):
+                result_grps.append(gr_member)
+                helper(dg_name, gr_member)
+            else:
+                # Not found in current DG, check ancestors
+                reversed_ancestors = reversed(dg_data[dg_name]["ancestors"])
+                reversed_ancestors_list = list(reversed_ancestors)
+                for ancestor in reversed_ancestors_list:
+                    if gr_member in dg_data[ancestor].get("address", []):
+                        result.append(gr_member)
+                        break
+                    elif gr_member in dg_data[ancestor].get("address-group", {}):
+                        helper(ancestor, gr_member)
                         break
 
     helper(dg_name, group_name)
@@ -125,8 +168,7 @@ def get_members(xml_element, xpath):
     member_list = set()
     xml_elements = xml_element.findall(xpath)
     if xml_elements is not None:
-        for member in xml_elements:
-            member_list.add(member.text)
+        member_list = set(member.text for member in xml_elements)
     return member_list
 
 
@@ -220,13 +262,122 @@ def collect_dg_data(xml_root, ro_element):
     return dg_objects
 
 
+def find_used_ags(dg_data):
+
+    used_groups = {}
+    for dg in dg_data:
+        used_groups[dg] = []
+        if len(dg_data[dg]["address-group"]) > 0:
+            for addr_grp in dg_data[dg]["address-group"]:
+                if addr_grp in dg_data[dg]["rulebase-addr"]:
+                    groups_in_group = resolve_group_to_gr_only(dg_data, dg, addr_grp)
+                    used_groups[dg].append(addr_grp)
+                    used_groups[dg].extend(groups_in_group)
+                for child_dg in dg_data[dg]["descendants"]:
+                    if addr_grp in dg_data[child_dg]["rulebase-addr"]:
+                        groups_in_group = resolve_group_to_gr_only(dg_data, dg, addr_grp)
+                        used_groups[dg].append(addr_grp)
+                        used_groups[dg].extend(groups_in_group)
+
+    return used_groups
+
+
+def find_unused_ags(dg_data):
+
+    cli_cmds_str = ''
+    for dg in dg_data:
+        if len(dg_data[dg]["address-group"]) > 0:
+            for addr_grp in dg_data[dg]["address-group"]:
+                if addr_grp not in dg_data[dg]["rulebase-addr"]:
+                    unused_ag = True
+                    for child_dg in dg_data[dg]["descendants"]:
+                        if addr_grp in dg_data[child_dg]["rulebase-addr"]:
+                            unused_ag = False
+                    if unused_ag:
+                        cli_cmds_str += "not_used_address-group: delete device-group \"" + dg + "\" address-group \"" + addr_grp + "\"\n"
+
+    return cli_cmds_str
+
+
+def find_unused_ags_v2(dg_data):
+
+    used_agroups = find_used_ags(dg_data)
+    cli_cmds_str = ''
+    for dg in dg_data:
+        if len(dg_data[dg]["address-group"]) > 0:
+            for addr_grp in dg_data[dg]["address-group"]:
+                if addr_grp not in used_agroups[dg]:
+                    unused_ag = True
+                    for child_dg in dg_data[dg]["descendants"]:
+                        if addr_grp in used_agroups[child_dg]:
+                            unused_ag = False
+                    if unused_ag:
+                        cli_cmds_str += "not_used_address-group: delete device-group \"" + dg + "\" address-group \"" + addr_grp + "\"\n"
+
+    return cli_cmds_str
+
+
+
+def extract_address_group_in_rules(dg_data):
+
+    # extracts address-groups used in rules
+    # after first usage of an address-group no same name addr-grp can be inserted from any ancestor dg
+    for dg in dg_data:
+        print("-----------------------------------------", dg)
+        used_groups = []
+
+        # check address-groups in rulebase of current dg.
+        # If found resolve the group in rulebase to its address elements and remove group name.
+        if len(dg_data[dg]["address-group"]) > 0:
+
+            for addr_grp in dg_data[dg]["address-group"]:
+
+                # check address-group in rulebase of current dg.
+                if addr_grp in dg_data[dg]["rulebase-addr"]:
+                    print("address-group ", addr_grp, " used_from_current_dg, ", dg)
+                    used_groups.append(addr_grp)
+                    resolved_grp = resolve_group_to_addr_only(dg_data, dg, addr_grp)
+                    for member in resolved_grp:
+                        dg_data[dg]["rulebase-addr"].add(member)
+                    dg_data[dg]["rulebase-addr"].remove(addr_grp)
+
+        # check address-groups of ancestor dg in rulebase of current dg.
+        # the ancestors needed in reverse order to start wit the nearest parent dg of current dg
+        reversed_ancestors = reversed(dg_data[dg]["ancestors"])
+        reversed_ancestors_list = list(reversed_ancestors)
+        for dg_ancestor in reversed_ancestors_list:
+            # iterate over the address groups in ancestor dg
+            for addr_grp_anc in dg_data[dg_ancestor]["address-group"]:
+                if addr_grp_anc in dg_data[dg]["rulebase-addr"] and addr_grp_anc not in used_groups:
+                    print("address-group ", addr_grp_anc, " used_from_ancestor_dg,  ", dg_ancestor)
+                    used_groups.append(addr_grp_anc)
+                    resolved_grp_anc = resolve_group_to_addr_only(dg_data, dg_ancestor, addr_grp_anc)
+                    for member in resolved_grp_anc:
+                        dg_data[dg]["rulebase-addr"].add(member)
+                    dg_data[dg]["rulebase-addr"].remove(addr_grp_anc)
+                elif addr_grp_anc in dg_data[dg]["rulebase-addr"] and addr_grp_anc in used_groups:
+                    print("hoppa parent dg has same address-group. parent-dg ", dg_ancestor, " address-group ", addr_grp_anc," with child dg ", dg)
+
+    return dg_data
+
 def main(argv):
 
     file_path = 'C:/Users/dakos/Downloads/'
-    xml_input = file_path + '14185.xml'
+    xml_input = file_path + '16305.xml'
     #xml_output = xml_input.replace('.xml', '_mod.xml')
     time_str = time.strftime("%Y%m%d_%H%M%S")
-    result_output = file_path + 'paloalto_fqdn_audit_' + time_str + '.csv'
+
+    unused_addresses_file = file_path + 'paloalto_unused_addresses_' + time_str + '.txt'
+    not_resolvable_fqdns_file = file_path + 'paloalto_notresolvable_fqdns_' + time_str + '.txt'
+    multiplied_addresses_file = file_path + 'paloalto_multiplied_addresses_' + time_str + '.txt'
+    unused_address_groups_file = file_path + 'paloalto_unused_address_groups_' + time_str + '.txt'
+
+    # prepare the output file
+    f_unused_addrs = open(unused_addresses_file, "x")
+    f_unres_fqdns = open(not_resolvable_fqdns_file, "x")
+    f_multiplied_addrs = open(multiplied_addresses_file, "x")
+    f_unused_ags = open(unused_address_groups_file, "x")
+
 
     print("script start timestamp : ", time.strftime("%Y%m%d_%H%M%S"))
 
@@ -238,57 +389,40 @@ def main(argv):
     dg_data = collect_dg_data(element_root, ro_element)
 
     print("time after dictionary created : ", time.strftime("%Y%m%d_%H%M%S"))
-    f = open(result_output, "x")
+
+    # find unused groups
+    cli_commands = find_unused_ags_v2(dg_data)
+    f_unused_ags.write(cli_commands)
+
     # extracts address-groups used in rules
-    # after first usage of an address-group no same name addr-grp can be inserted from any ancestor dg
-    for dg in dg_data:
+    dg_data_extracted = extract_address_group_in_rules(dg_data)
+
+    # find multiplied fqdns and not used fqdns
+    addr_type = "fqdn"
+    for dg in dg_data_extracted:
         print("-----------------------------------------", dg)
-        used_groups = []
-        # check address-groups in rulebase of current dg.
-        # If found resolve the group in rulebase to its address elements and remove group name.
-        if len(dg_data[dg]["address-group"]) > 0:
-            for addr_grp in dg_data[dg]["address-group"]:
-
-                # check address-group in rulebase of current dg.
-                if addr_grp in dg_data[dg]["rulebase-addr"]:
-                    print("address-group ", addr_grp, " used from current dg, ", dg)
-                    used_groups.append(addr_grp)
-                    resolved_grp = resolve_group(dg_data, dg, addr_grp)
-                    for member in resolved_grp:
-                        dg_data[dg]["rulebase-addr"].add(member)
-                    dg_data[dg]["rulebase-addr"].remove(addr_grp)
-
-        # check address-groups of ancestor dg in rulebase of current dg.
-        # the ancestors needed in reverse order to start wit the nearest parent dg of current dg
-        reversed_ancestors = reversed(dg_data[dg]["ancestors"])
-        reversed_ancestors_list = list(reversed_ancestors)
-        for dg_ancestor in reversed_ancestors_list:
-            # check address group in ancestor
-            for addr_grp_anc in dg_data[dg_ancestor]["address-group"]:
-                if addr_grp_anc in dg_data[dg]["rulebase-addr"] and addr_grp_anc not in used_groups:
-                    print("address-group ", addr_grp_anc, " used from ancestor dg,  ", dg_ancestor)
-                    used_groups.append(addr_grp_anc)
-                    resolved_grp_anc = resolve_group(dg_data, dg_ancestor, addr_grp_anc)
-                    for member in resolved_grp_anc:
-                        dg_data[dg]["rulebase-addr"].add(member)
-                    dg_data[dg]["rulebase-addr"].remove(addr_grp_anc)
-
-    for dg in dg_data:
-        print("-----------------------------------------", dg)
-        for fqdn in dg_data[dg]["fqdn"]:
-            if fqdn not in dg_data[dg]["rulebase-addr"]:
-                used_fqdn = False
+        dg_quoted = "\"" + dg + "\""
+        dup_count = 0
+        not_used_count = 0
+        not_resolved_count = 0
+        for address_object in dg_data_extracted[dg][addr_type]:
+            address_object_quoted = "\"" + address_object + "\""
+            if address_object not in dg_data_extracted[dg]["rulebase-addr"]:
+                used_address = False
             else:
-                used_fqdn = True
-            for dg_descendant in dg_data[dg]["descendants"]:
-                if used_fqdn is False and fqdn in dg_data[dg_descendant]["rulebase-addr"]:
-                    used_fqdn = True
-                if fqdn in dg_data[dg_descendant]["fqdn"]:
-                    print("duplicated fqdn name ", fqdn, " from dg ", dg, " in ", dg_descendant)
-                    f.write("duplicated fqdn name " + fqdn + " from dg " + dg + " in " + dg_descendant + "\n")
-            if used_fqdn is False:
-                print("not used fqdn ", fqdn, " from dg ", dg)
-                f.write("not used fqdn " + fqdn + " from dg " + dg + "\n")
+                used_address = True
+            for dg_descendant in dg_data_extracted[dg]["descendants"]:
+                if used_address is False and address_object in dg_data_extracted[dg_descendant]["rulebase-addr"]:
+                    used_address = True
+                if address_object in dg_data_extracted[dg_descendant][addr_type]:
+                    dup_count += 1
+                    dg_descendant_quoted = "\"" + dg_descendant + "\""
+                    #print("duplicated_fqdn_name ", fqdn_quoted, " from_dg ", dg_quoted, " in ", dg_descendant_quoted)
+                    f_multiplied_addrs.write("duplicated_fqdn_name " + address_object_quoted + " from_dg " + dg_quoted + " in " + dg_descendant_quoted + "\n")
+            if used_address is False:
+                not_used_count += 1
+                #print("not_used_fqdn ", fqdn_quoted, " from dg ", dg_quoted)
+                f_unused_addrs.write("not_used_fqdn: delete device-group " + dg_quoted + " address " + address_object_quoted + "\n")
 
         # here we resolve the fqdns to ip if exists. it is multithreaded.
         threads = list()
@@ -298,8 +432,9 @@ def main(argv):
         global resolvable_ips
         resolvable_ips = []
         fqdn_list = []
-        for fqdn in dg_data[dg]["fqdn"]:
-            fqdn_item = [fqdn, dg_data[dg]["fqdn"][fqdn]]
+        for fqdn_obj_name in dg_data[dg]["fqdn"]:
+            domain_name = dg_data[dg]["fqdn"][fqdn_obj_name]
+            fqdn_item = [fqdn_obj_name, domain_name]
             fqdn_list.append(fqdn_item)
         # split up the list for multithreaded dns resolution check.
         chunk_size = 3
@@ -314,9 +449,12 @@ def main(argv):
 
         for fqdn_list in resolvable_ips:
             if not fqdn_list[1]:
-                print("not resolvable fqdn ", fqdn_list[0], " from dg ", dg)
-                f.write("not resolvable fqdn " + fqdn_list[0] + " from dg " + dg + "\n")
+                not_resolved_count += 1
+                fqdn1_quoted = "\"" + fqdn_list[0] + "\""
+                #print("not_resolvable_fqdn ", fqdn1_quoted, " from_dg ", dg_quoted)
+                f_unres_fqdns.write("not_resolvable_fqdn: delete device-group " + dg_quoted + " address " + fqdn1_quoted + "\n")
 
+        print("sum for device-group:", dg_quoted, ":", "duplicated: ", dup_count, "not_used:", not_used_count, "unresolved:", not_resolved_count)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
