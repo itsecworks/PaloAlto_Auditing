@@ -1,0 +1,172 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+# Author: Ist wurst...
+import pdb
+import sys
+import xml.etree.ElementTree as ET
+import time
+from ipaddress import IPv4Interface
+import requests
+import time
+
+
+# Function to download the configuration XML file
+def download_configuration(panorama_ip, api_key, out_file):
+    url = f'https://{panorama_ip}/api/?type=config&action=show&key={api_key}'
+    response = requests.get(url, verify=False)
+
+    if response.status_code == 200:
+        with open(out_file, 'wb') as f:
+            f.write(response.content)
+        print("Configuration downloaded successfully!")
+    else:
+        print("Failed to download configuration.")
+
+
+def get_firewall_data(xml_filename: str):
+    """
+
+    :param xml_filename: the complete XML config of the Panorama
+    :return: dictionary that contains the interface information
+    """
+    file_path = 'C:/Users/dakos/Downloads/'
+    time_str = time.strftime("%Y%m%d_%H%M%S")
+    fw_ifs_filename = file_path + 'paloalto_interfaces_' + time_str + '.csv'
+    fw_ifs_file = open(fw_ifs_filename, "x")
+
+    tree = ET.parse(xml_filename)
+    root = tree.getroot()
+    tmpl_data_dict = {"template": {}}
+    csv_result = "template, vsys, zone, ifname, unitname, vlanid, ip, ip_net\n"
+    tmpl_xpath = "./result/config/devices/entry/template/entry"
+    for tmpl in root.findall(tmpl_xpath):
+        tmpl_name = tmpl.attrib["name"]
+        tmpl_data_dict["template"][tmpl_name] = {}
+        tmpl_data_dict["template"][tmpl_name]["vsys"] = {}
+
+        # collect zones
+        for vsys in tmpl.findall("./config/devices/entry/vsys/entry"):
+            vsys_name = vsys.attrib["name"]
+            tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name] = {}
+            tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"] = {}
+            for zone in vsys.findall("./zone/entry"):
+                zone_name = zone.attrib["name"]
+                tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"][zone_name] = {}
+                if_list = []
+                if zone.findall("./network/layer3/member") is not None:
+                    for unit_name in zone.findall("./network/layer3/member"):
+                        if_list.append(unit_name.text)
+                tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"][zone_name]["if_list"] = if_list
+                if len(tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"][zone_name]["if_list"]) == 0:
+                    csv_result += "{c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8} \n".format(c1=tmpl_name, c2=vsys_name,
+                                                                                             c3=zone_name,
+                                                                                             c4="no_ifname",
+                                                                                             c5="no_unit_name",
+                                                                                             c6="no_vlanid",
+                                                                                             c7="no_ip_addr",
+                                                                                             c8="no_ip_net")
+        # collect ips
+        if_types_xpath = ["./config/devices/entry/network/interface/ethernet/entry",
+                          "./config/devices/entry/network/interface/aggregate-ethernet/entry"]
+        for if_xpath in if_types_xpath:
+            for interface in tmpl.findall(if_xpath):
+                ifname = interface.attrib["name"]
+                # subinterfaces
+                if interface.findall("./layer3/units/entry") is not None and len(
+                        interface.findall("./layer3/units/entry")) > 0:
+                    for unit in interface.findall("./layer3/units/entry"):
+                        unit_name = unit.attrib["name"]
+                        vlanid = unit.find("./tag").text
+                        if unit.findall("./ip/entry") is not None:
+                            for ip in unit.findall("./ip/entry"):
+                                ip_addr = ip.attrib["name"]
+                                interface = IPv4Interface(ip_addr)
+                                ip_net = str(interface.network)
+                                found = 0
+                                # interface is allocated to zone
+                                for vsys_name in tmpl_data_dict["template"][tmpl_name]["vsys"]:
+                                    for zone_name in tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"]:
+                                        if unit_name in \
+                                                tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"][
+                                                    zone_name]["if_list"]:
+                                            found = 1
+                                            csv_result += "{c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8} \n".format(
+                                                c1=tmpl_name,
+                                                c2=vsys_name,
+                                                c3=zone_name,
+                                                c4=ifname,
+                                                c5=unit_name,
+                                                c6=vlanid,
+                                                c7=ip_addr,
+                                                c8=ip_net)
+                                # interface is NOT allocated to zone
+                                if found == 0:
+                                    csv_result += "{c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8} \n".format(
+                                        c1=tmpl_name,
+                                        c2="no_vsys_name",
+                                        c3="no_zonename",
+                                        c4=ifname,
+                                        c5=unit_name,
+                                        c6=vlanid,
+                                        c7=ip_addr,
+                                        c8=ip_net)
+                # no subinterfaces
+                else:
+                    for ip in interface.findall("./layer3/ip/entry"):
+                        ip_addr = ip.attrib["name"]
+                        interface = IPv4Interface(ip_addr)
+                        ip_net = str(interface.network)
+                        found = 0
+                        # interface is allocated to zone
+                        for vsys_name in tmpl_data_dict["template"][tmpl_name]["vsys"]:
+                            for zone_name in tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"]:
+                                if ifname in \
+                                        tmpl_data_dict["template"][tmpl_name]["vsys"][vsys_name]["zone"][zone_name][
+                                            "if_list"]:
+                                    found = 1
+                                    csv_result += "{c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8} \n".format(
+                                        c1=tmpl_name,
+                                        c2=vsys_name,
+                                        c3=zone_name,
+                                        c4=ifname,
+                                        c5="no_unit_name",
+                                        c6="no_vlanid",
+                                        c7=ip_addr,
+                                        c8=ip_net)
+                        # interface is NOT allocated to zone
+                        if found == 0:
+                            csv_result += "{c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7}, {c8} \n".format(
+                                c1=tmpl_name,
+                                c2="no_vsys_name",
+                                c3="no_zonename",
+                                c4=ifname,
+                                c5="no_unit_name",
+                                c6="no_vlanid",
+                                c7=ip_addr,
+                                c8=ip_net)
+
+    print(csv_result)
+    fw_ifs_file.write(csv_result)
+
+
+def main(argv):
+    time_str = time.strftime("%Y%m%d_%H%M%S")
+    file_path = 'C:/Users/YOURNAME/Downloads/'
+    # Replace with your Panorama details
+    panorama_ip_dev = 'YOURPANORAMAIP'  # IP address of your Panorama
+    api_key_dev = '...'
+    panorama_ip_prod = 'YOURPANORAMAIP'  # IP address of your Panorama
+    api_key_prod = '...'
+    result_output = file_path + 'panorama_configuration_' + "_" + panorama_ip_dev + "_" + time_str + '.xml'
+
+    # Disable SSL warnings (for self-signed certificates)
+    requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
+
+    # Download configuration file if authentication is successful
+    download_configuration(panorama_ip_dev, api_key_dev, result_output)
+    # Parse and save interface data into a csv file
+    get_firewall_data(result_output)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
